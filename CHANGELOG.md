@@ -16,7 +16,7 @@
 | v3.9 | 13 / 2.2 | 11-14 18:4x | 改用 launcher 语义 intent（`ACTION_MAIN` + `LEANBACK_LAUNCHER` / `LAUNCHER` + `RESET_TASK_IF_NEEDED`）想把整个任务栈带回前台；放宽跳过条件；恢复多次纠正 | `ActivityNotFoundException`：隐式跨包启动解析不到，自动回退旧的显式组件路径 |
 | v3.9.1 | 14 / 2.3 | 11-14 18:44 | 清单加 `QUERY_ALL_PACKAGES`（normal 权限，无 `<queries>` 声明）解决 Android 11 包可见性 | 验证器接受、可见性生效（`component unavailable` → `not exported`），但隐式 launcher intent **仍解析失败**；实测连 `adb shell` 都报 unable to resolve ⇒ TCL 系统级限制 |
 | **v3.10** | **15 / 2.4** | 11-14 18:58 | 用户要求「参考 3.6」：从历史记录里提取 v3.6 的 887 行完整源码原样覆盖，清单也回退（移除 `QUERY_ALL_PACKAGES`），只改注释与日志标记 | 逻辑 100% 复原、5 次纠正节奏恢复，**但实测仍落在首页** ⇒ 证明问题不在服务代码改动，而在「同一份代码遇到不同的待机页面状态」 |
-| **v4.0** | **16 / 3.0** | 11-14 19:38 | **找到真因并修复**：显式组件 + `ACTION_MAIN` + `CATEGORY_LAUNCHER` + `NEW_TASK\|RESET_TASK_IF_NEEDED\|NO_ANIMATION`（**去掉 `SINGLE_TOP`**），把整个任务栈原样带回前台而不新建首页；删除每次必抛异常的精确恢复分支；恢复 5 次纠正并取消 v3.8 的跳过判断；新增 legacy fallback | 重绑实测 10 次 `task reuse`、`fallback=0`、`SecurityException=0`；`mCurrentFocus` 保持在 `DetailActivity`，栈 = Home → History → Detail，**无多余首页** |
+| **v4.0** | **16 / 3.0** | 11-14 19:38 | **找到真因并修复**：显式组件 + `ACTION_MAIN` + `CATEGORY_LAUNCHER` + `NEW_TASK\|RESET_TASK_IF_NEEDED\|NO_ANIMATION`（**去掉 `SINGLE_TOP`**），把整个任务栈原样带回前台而不新建首页；删除每次必抛异常的精确恢复分支；恢复 5 次纠正并取消 v3.8 的跳过判断；新增 legacy fallback | 重绑实测 10 次 `task reuse`、`fallback=0`、`SecurityException=0`；`mCurrentFocus` 保持在 `DetailActivity`，栈 = Home → History → Detail，**无多余首页**；**11-14 20:09 用户真实遥控器「暂停 → 待机 → 唤醒」实测通过 ✅**（见下节） |
 
 ---
 
@@ -30,6 +30,20 @@
 - 显式组件绕开 TCL 的隐式解析限制；`RESET_TASK_IF_NEEDED` 提供 launcher 语义。这正是 v3.6 缺「不新建首页」、v3.9 缺「显式组件」的合集。
 
 已实证排除的替代方案：全局返回键被首页吞掉；`DetailActivity` 连 `adb shell` (uid 2000) 都报 `not exported`；`LEANBACK_LAUNCHER` 与标准 `LAUNCHER` 的隐式 `am start` 都无法解析；应用有 3 个 exported receiver 但未用于本方案。详见 [docs/troubleshooting.md](docs/troubleshooting.md)。
+
+## v4.0 真机实测记录（最终确认）
+
+**2026-11-14 20:09，用户用真实遥控器完成「播放页按暂停 → 待机 → 唤醒」，成功回到暂停前界面并接着播放。** 之前所有版本缺的都是这一步——我不能用 `input keyevent 26` 代替，会让 5555 掉线且唤不醒。
+
+设备只读取证（v4.0 / `versionCode 16` / `3.0`，进程 31266 存活，小 T 助手 + myDV Resume 两个无障碍服务 Bound）：
+
+- 服务日志出现两次真实 `SCREEN_OFF`，每次都记录 `standby class=...DetailActivity`（`com.cctv.yangshipin.app.androidq`）；
+- 唤醒后 `WAKE foreground event gave com.cctv.yangshipin.app.androidq`、`WAKE class from standby record: ...DetailActivity`；
+- 各纠正点连续多次 `launched ... (task reuse) top=...DetailActivity`，**没有** `legacy fallback`、**没有** `SecurityException`；
+- `quiet myDV background audio` 在每次唤醒时照常执行（没有叠加 myDV 声音）；
+- 当前 `mCurrentFocus = ...DetailActivity`；任务栈 = `HomeActivity → SearchActivity → FastSearchActivity → DetailActivity`（4 个），**没有多压一个新首页** —— 这正是 v3.6 / v3.10 会出问题的地方。
+
+结论：显式组件 + `RESET_TASK_IF_NEEDED` + 去掉 `SINGLE_TOP` 的方案在真实待机唤醒场景成立；5 次纠正、静音、白名单、冷启动逻辑保持原样。**项目功能闭环。**
 
 ## APK 指纹
 

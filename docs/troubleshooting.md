@@ -14,6 +14,8 @@
 
 > 这也解释了「把 v3.6 代码 100% 恢复仍不行」：同样代码，待机时停在的页面状态不同，结果就不同。
 
+**最终验证（2026-11-14 20:09）**：用户用真实遥控器完成「暂停 → 待机 → 唤醒」并确认成功。设备日志显示两次真实 `SCREEN_OFF` 都记录 `standby class=...DetailActivity`，唤醒后连续多次 `launched ... (task reuse) top=...DetailActivity`，无 `legacy fallback` / `SecurityException`，`mCurrentFocus` 保持在 `DetailActivity`，任务栈没有多压首页。完整证据见 [CHANGELOG.md 的真机实测记录](../CHANGELOG.md#v40-真机实测记录最终确认)。**本症状在 v4.0 已解决，不要再往「播放页不导出」方向排查。**
+
 ## B. 「待机前暂停突然也不行了」（v3.8 回归）
 
 - v3.8 把「消除重复启动」当优化：`isPkgForeground` 改成进程级 `RunningAppProcessInfo` 探测，首次启动即判为「已在前台」，5 个纠正点里后续 4 个全部 `skip repeat launch … starts=1`。

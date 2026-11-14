@@ -4,6 +4,7 @@
 
 - 仓库：<https://github.com/Wflysea/TCL>
 - 当前版本：**v4.0** / `versionCode 16` / `versionName 3.0`
+- **状态：✅ 2026-11-14 用户用真实遥控器完成「暂停 → 待机 → 唤醒」测试，成功回到暂停前界面并接着播放**（[实测记录](CHANGELOG.md)）
 - 版本演进见 [CHANGELOG.md](CHANGELOG.md)
 
 ---

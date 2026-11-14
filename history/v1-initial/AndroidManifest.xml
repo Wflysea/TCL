@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.wb.mydvresume"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <application android:label="myDV Resume" android:allowBackup="true">
+
+        <!-- 故意不声明 CATEGORY_HOME：TCL 验证器会拒绝任何声明 HOME 的非 TCL 签名 APK。
+             本应用只靠系统绑定的无障碍服务常驻，开机由系统自动重新绑定，无需 BOOT_COMPLETED。 -->
+        <service
+            android:name=".ResumeService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/resume_config" />
+        </service>
+    </application>
+</manifest>

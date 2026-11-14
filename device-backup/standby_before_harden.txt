@@ -1,0 +1,47 @@
+=== 加固前快照 Sun Nov  8 20:31:29     2026 ===
+--- pm list packages -d ---
+package:com.tcl.recognize.service
+package:com.audiocn.karaoke.micmanager
+package:com.tcl.wholenetsearch
+package:com.tcl.initsetup
+package:com.tcl.bootadservice
+package:com.tcl.common.weather
+package:com.tcl.useragreement
+package:com.tcl.gamebar
+package:com.tcl.browser
+package:com.tcl.ffkaraoke
+package:com.tcl.logkit
+package:com.tcl.versionUpdateApp
+package:com.tcl.mpc
+package:com.tcl.vod
+package:com.tcl.hearaid
+package:com.tcl.workmode
+package:com.tcl.repairguide
+package:com.tcl.tliveplay
+package:android.autoinstalls.config.tcl.device
+package:com.tcl.playskill
+package:com.snm.upgrade
+package:com.tcl.profilemanager
+package:com.tcl.ffeducation
+package:com.tcl.c2dm.client
+package:com.tcl.soundbox
+package:com.tcl.appreciate.art
+package:com.tcl.ttvs
+--- appops get myDV ---
+WAKE_LOCK: allow; time=+2h50m37s735ms ago; duration=+1s151ms
+WRITE_MEDIA_AUDIO: deny; rejectTime=+1d0h45m35s994ms ago
+WRITE_MEDIA_VIDEO: deny; rejectTime=+1d0h45m35s990ms ago
+WRITE_MEDIA_IMAGES: deny; rejectTime=+1d0h45m35s988ms ago
+MANAGE_EXTERNAL_STORAGE: default; rejectTime=+1d0h45m36s30ms ago
+NO_ISOLATED_STORAGE: deny; rejectTime=+1d0h45m36s27ms ago
+APP_AUTO_START: ignore; rejectTime=+1d0h45m36s934ms ago
+--- deviceidle whitelist ---
+system-excidle,com.android.providers.calendar,10007
+system-excidle,com.android.providers.downloads,10006
+system-excidle,com.android.proxyhandler,10010
+system-excidle,com.android.shell,2000
+system-excidle,com.android.providers.contacts,10004
+system,com.android.providers.downloads,10006
+system,com.android.shell,2000
+--- guard 状态 ---
+    User 0: ceDataInode=670662 installed=true hidden=false suspended=false distractionFlags=0 stopped=false notLaunched=false enabled=0 instant=false virtual=false

@@ -1,0 +1,14 @@
+{
+  "package": "com.github.mytv.dv",
+  "commands": [
+    "cmd deviceidle whitelist +com.github.mytv.dv",
+    "appops set com.github.mytv.dv APP_AUTO_START allow",
+    "appops set com.github.mytv.dv APP_ASSOC_START allow"
+  ],
+  "guard_disabled": true,
+  "guard_was_disabled_before": false,
+  "harden_applied": true,
+  "extra_disabled": [
+    "com.tcl.appmarket2"
+  ]
+}

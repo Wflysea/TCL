@@ -1,0 +1,33 @@
+# ---- credentials / private keys (NEVER commit) ----
+*.jks
+*.keystore
+.keystore_pass
+*_pass
+.env
+*token*
+*secret*
+
+# ---- build scratch / large binaries ----
+__pycache__/
+*.pyc
+classes/
+classes8/
+dexout/
+dexout8/
+tools/
+*.idsig
+*.bin
+compiled_res.zip
+base.apk
+aligned.apk
+recv_dis.txt
+ougo_check.apk
+install_probe.apk
+mydv_installed_*.apk
+installed_check.apk
+apk_source/
+wb_ui.xml
+
+# ---- OS junk ----
+Thumbs.db
+.DS_Store

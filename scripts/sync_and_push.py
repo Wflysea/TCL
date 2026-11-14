@@ -80,11 +80,12 @@ def copy_file(src, dst, sanitize=False, dry_run=False):
 
 def git(*args, **kwargs):
     check = kwargs.pop("check", True)
+    silent = kwargs.pop("silent", False)
     cmd = ["git", "-C", REPO] + list(args)
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        universal_newlines=True, encoding="utf-8", errors="replace")
     out = (p.stdout or "").strip()
-    if out:
+    if out and not silent:
         for line in out.splitlines():
             print("    " + line, flush=True)
     if check and p.returncode != 0:
@@ -172,8 +173,10 @@ def main():
     if rc == 0:
         log("no file changes to commit")
     else:
+        _, names = git("diff", "--cached", "--name-only", check=False, silent=True)
+        real_changed = len([x for x in names.splitlines() if x.strip()])
         msg = args.message or ("sync: %s | vc%s | %d file(s) changed"
-                               % (stamp, vc, changed))
+                               % (stamp, vc, real_changed))
         git("-c", "user.name=Wflysea",
             "-c", "user.email=Wflysea@users.noreply.github.com",
             "commit", "-m", msg)

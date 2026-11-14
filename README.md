@@ -116,6 +116,8 @@ python scripts/sync_and_push.py
 
 常用参数：`--message "说明"` 自定义提交信息、`--no-push` 只提交不推送、`--dry-run` 只预览变更。推送走 SSH（`git@github.com:Wflysea/TCL.git`），不需要任何令牌。
 
+**端到端验证**（2026-11-14）：首次导入 66 个文件（约 444 KB）后，又用本脚本跑了一次「改文档 → 自动 commit → push」实测，本地 `main` 与远端一致。此后每次改动都由它收口，不需要手动敲 git 命令。
+
 ---
 
 ## 6. 安全说明

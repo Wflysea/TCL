@@ -50,6 +50,8 @@ python push_apk.py
 - 走 **6553 tcast / `com.tcl.MultiScreenInteraction_TV`** 多屏互动，不是 `adb install`。
 - **电视端会弹安装确认：按「右」选中「同意」再按确认。**
 - 成功标志：`stage=5 INSTALLED`。出现过 `stage=2` 重试提示只是多 URL 兜底，不代表失败；以 `INSTALLED` 和设备实际版本为准。
+- 2026-11-15 起，收到 `INSTALLED` 后脚本会打印 `keeping session alive for TV teardown (<= 10s)...` 并**多等最多 10 秒**：这段时间继续发 `150>>` 心跳、HTTP server 继续提供 APK，让电视端把 `onBusinessRemove` 收尾走完或主动关闭会话。这是**刻意行为**，不是卡住。原因见 [troubleshooting.md](troubleshooting.md) 的「安装成功瞬间闪出下载失败」。
+- 若电视端主动关闭会话，会打印 `TV closed the session cleanly` 并立刻退出；否则等满 `GRACE_SECONDS`（默认 10 秒）再优雅关闭。优雅期内收到的后续 `223` 状态会打印成 `late TV state:`，便于诊断。
 - 若遇到残留的旧安装通知或模型侧报错，先核查 `dumpsys package com.wb.mydvresume | grep versionCode` 与设备内 `base.apk` 哈希，别急着重推。
 
 设备内哈希核对：

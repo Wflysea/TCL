@@ -28,6 +28,14 @@ APK_NAME = "MyDvResume.apk"
 APK_DIR = r"C:\Temp\wbapk"
 ADB = r"E:\WorkBuddy\闲聊\_tmp\platform-tools\adb.exe"
 TIMEOUT = 300
+# After the TV reports "installed", keep the tcast session (and the APK HTTP
+# server) alive briefly. Closing the socket immediately makes the TV log
+# "Session ... close isRemove:true" + "onSessionDisconnect", then broadcast
+# status 1 to the launcher, which flashes a spurious "download failed" toast
+# even though PACKAGE_ADDED was already sent and the APK is installed.
+# Evidence (2026-11-15 19:22:25): PACKAGE_ADDED -> close/sessionDisconnect
+# -> "Send broadcast status 1 to launcher" within 40 ms.
+GRACE_SECONDS = 10
 
 
 def adb(*args):
@@ -61,6 +69,52 @@ def messages(buf):
         out.append(buf[4:4 + n].decode("utf-8", "replace"))
         buf = buf[4 + n:]
     return out, buf
+
+
+def finish(sock, httpd, grace=GRACE_SECONDS):
+    """Graceful teardown after INSTALLED (fixes the spurious "download failed").
+
+    The TV removes the install business session a few hundred ms AFTER
+    PACKAGE_ADDED. If the PC closes the tcast socket first, TCastManager sees
+    an abnormal session disconnect and tells the launcher the download failed.
+    So: keep the heartbeat going, keep the APK HTTP server up, and let the TV
+    close the session itself. Give up after `grace` seconds.
+    """
+    print("  INSTALLED; keeping session alive for TV teardown (<= %ds)..."
+          % grace, flush=True)
+    deadline = time.monotonic() + grace
+    last_beat = time.monotonic()
+    buf = b""
+    while time.monotonic() < deadline:
+        try:
+            chunk = sock.recv(65536)
+            if not chunk:
+                print("  TV closed the session cleanly", flush=True)
+                break
+            buf += chunk
+        except socket.timeout:
+            pass
+        except (OSError, ValueError) as e:
+            print("  session recv ended:", e, flush=True)
+            break
+        found, buf = messages(buf)
+        for msg in found:
+            # Log late states: if a spurious stage=2 ever follows stage=5,
+            # it will now be visible instead of being cut off by sock.close().
+            if msg.startswith("223"):
+                print("  late TV state: %s" % msg[:180], flush=True)
+        if time.monotonic() - last_beat > 5:
+            try:
+                send(sock, "150>>")
+            except OSError:
+                break
+            last_beat = time.monotonic()
+    try:
+        sock.close()
+    except OSError:
+        pass
+    httpd.shutdown()
+    return 0
 
 
 def main():
@@ -106,6 +160,7 @@ def main():
         print("  INSTALL request sent; waiting for 同意 on the TV...", flush=True)
 
         buf = b""
+        attempt_done = False
         last_beat = time.monotonic()
         try:
             while time.monotonic() < deadline:
@@ -131,26 +186,22 @@ def main():
                             sock.close()
                             return 1
                         elif st == "installed":
-                            print("  INSTALLED", flush=True)
-                            sock.close()
-                            httpd.shutdown()
-                            return 0
+                            return finish(sock, httpd)
                     elif parts[1] == "PROGRESS":
                         stage, pct = parts[4], parts[5] if len(parts) > 5 else "?"
                         print("  PROGRESS stage=%s percent=%s" % (stage, pct), flush=True)
                         if stage == "5":
-                            print("  INSTALLED", flush=True)
-                            sock.close()
-                            httpd.shutdown()
-                            return 0
+                            return finish(sock, httpd)
                         if stage == "2":
                             print("  下载/安装失败，尝试下一个 URL", flush=True)
-                            break
+                            attempt_done = True
                         if stage == "4":
                             print("  TCL 验证器拒绝了该 APK（通常是声明了 HOME）", flush=True)
                             sock.close()
                             httpd.shutdown()
                             return 1
+                if attempt_done:
+                    break  # really move on to the next URL
                 if time.monotonic() - last_beat > 5:
                     send(sock, "150>>")
                     last_beat = time.monotonic()

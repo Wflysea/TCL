@@ -100,3 +100,32 @@ cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.in
 本例 14 个白名单应用里 `KNOWN_COMPONENTS` 只映射了 13 个，缺的正是后加的红果TV。Android 11 包可见性让 `getLaunchIntentForPackage()` 返回 null，`resolveWakeTarget()` 的 `probe != null` 失败 → 静默回退 `TARGET`。**补组件表 + 改用 SCREEN_OFF 待机记录选目标 + 通用 class 兜底** 后解决；详见 [CHANGELOG.md 的 v4.1 根因](../CHANGELOG.md)。
 
 不要往「任务栈 / SINGLE_TOP / 播放页不导出」方向排查——那是 v4.0 已解决的另一类症状（进应用首页、有声音没画面）。
+
+
+## 症状：安装完成瞬间闪出「下载失败」，但应用其实装好了（2026-11-15 已修）
+
+**这是推送脚本的收尾造成的假提示，不是安装失败。** 现象：按完「同意」后安装成功，画面上却一闪而过一个「下载失败」提示；核查 `dumpsys package com.wb.mydvresume | grep versionCode` 与设备内 `base.apk` 哈希，新版本已正确装好。
+
+**证据**（2026-11-15 19:22 推送 v4.1 时的电视端 logcat，按顺序）：
+
+```
+19:22:22  "GET /MyDvResume.apk HTTP/1.1" 200 -      ← 单次下载，进度 0→39→78→100
+19:22:25.176  PACKAGE_ADDED com.wb.mydvresume       ← 安装已成功
+19:22:25.199  Session cabc3b4@close isRemove: true
+              LocalNetwork: onSessionDisconnect ip: 192.168.1.15   ← PC 主动断开
+19:22:25.213  TCastManager: responseCmd...
+              Send broadcast status 1 to launcher    ← 闪「下载失败」
+19:22:25.243  NanoHTTPD SimpleWebServer IOException: Socket closed
+```
+
+**根因**：旧版 `scripts/push_apk.py` 一收到 `stage=5`（或 `installed`）就立刻 `sock.close()` + `httpd.shutdown()` + `return`。而 TCL 多屏互动是在 `PACKAGE_ADDED` **之后**才移除安装业务会话（`onBusinessRemove`）的；PC 抢先断连被 `TCastManager` 判为异常会话中断（`onSessionDisconnect`），于是给 launcher 广播失败状态，弹出那个提示。整个下载/安装链路其实是完整的。
+
+**修复**（只改 PC 端推送脚本，**APK 源码与电视上的版本都不变**）：
+
+1. 新增 `finish()`：安装成功后保持会话，继续发 `150>>` 心跳、HTTP server 继续服务，等电视端主动关会话；最多等 `GRACE_SECONDS = 10` 秒再优雅关闭。
+2. 优雅期内把后续 `223` 状态打印为 `late TV state:`，以后若真有 `stage=2` 也能看见，不会被 `sock.close()` 截断。
+3. 顺带修正一个逻辑 bug：`stage=2` 原本只 `break` 掉消息 for 循环，仍会卡在当前 URL 直到 300 秒超时；现在用 `attempt_done` 标志真正切到下一个 URL。
+
+本地用 `socketpair()` 模拟验证过两种情形：电视端主动关会话 → 0.3 秒干净退出；电视端无响应 → 超时后也能正常关闭 HTTP server 并返回 0。
+
+**注意**：这个提示与 v3.5 那次「推送失败」不是同一回事，也不要往「TCL 签名门 / HOME 声明 / 多 URL 重试」方向排查——那些会出现 `stage=4` 或 `stage=2`，而这里下载是 200、进度到 100%、`PACKAGE_ADDED` 已发出。

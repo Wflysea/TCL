@@ -73,3 +73,10 @@
 | **v4.1** | **`bf40c492…1c5`** | **20946 B** |
 
 所有版本 V1/V2/V3 签名通过，清单均不含 HOME / LAUNCHER / queries（否则会触发 TCL 签名门）。
+
+
+## 工具侧修复（不改 APK 版本）
+
+| 日期 | 文件 | 内容 |
+| --- | --- | --- |
+| 2026-11-15 | `scripts/push_apk.py` | 安装成功后不再立即关闭 tcast socket 与 APK HTTP server：新增 `finish()` 优雅收尾（`GRACE_SECONDS = 10`，保持 `150>>` 心跳、记录 `late TV state`），修复「安装完成瞬间闪出下载失败」的假提示；并修正 `stage=2` 未真正切换到下一个 URL 的逻辑。**APK 无任何改动，设备仍是 v4.1（17 / 3.1）**，下次推送自然生效，无需重新覆盖安装。根因与日志证据见 [docs/troubleshooting.md](docs/troubleshooting.md)。 |

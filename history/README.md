@@ -10,6 +10,7 @@
 | `v3.10/` | `v310_ResumeService.java`、`v310_AndroidManifest.xml` | 完整回退到 v3.6 行为（vc15 / 2.4） |
 | `v4.0/` | `v40_ResumeService.java`、`v40_AndroidManifest.xml` | 任务栈复用方案（vc16 / 3.0），用户实测通过 |
 | `v4.1/` | `v41_ResumeService.java`、`v41_AndroidManifest.xml` | 待机记录优先选目标 + 补红果TV 组件（vc17 / 3.1） |
+| `v4.2.1/` | `v421_ResumeService.java`、`v421_AndroidManifest.xml` | 自动学习白名单最终版（vc19 / 3.3），v4.3 横幅改造前的基准 |
 
 当前版本源码在 [`apk/`](../apk/README.md)。
 

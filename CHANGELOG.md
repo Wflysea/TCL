@@ -20,6 +20,7 @@
 | **v4.1** | **17 / 3.1** | 11-15 19:22 | 修复「唤醒拉错应用」：静态组件表补 `rocks.aston.hongguotv/.MainActivity`；`resolveWakeTarget()` 优先采用 SCREEN_OFF 持久化的待机包名（带 7 天新鲜度校验）；`resolveBootIntent()` 增加从 UsageEvents / 待机记录取真实 Activity 类的通用兜底 | 重绑实测两段唤醒共 **10 次 `launched rocks.aston.hongguotv`**、`mydv_launched=0`、`legacy fallback=0`；目标与待机前一致，设备哈希与本地一致 `bf40c492…1c5` |
 | **v4.2** | **18 / 3.2** | 11-15 20:08 | **自动学习白名单（中间构建）**：清单加 `QUERY_ALL_PACKAGES`；绑定时全量扫描自装应用、`PACKAGE_ADDED/REPLACED/REMOVED` 增量学习并缓存 launcher 组件；`isAllowed()` = 静态白名单 ∪ 运行时自装集合；`resolveBootIntent()` 改为六级组件解析。**v4.0 任务栈复用启动逻辑零改动** | 首次扫描 29 个包、缓存 16 个组件；重绑实测 11 次 `launched rocks.aston.hongguotv (task reuse)`、`myDV=0`、无 fallback；随后发现 29 个含系统更新包，需收紧 |
 | **v4.2.1** | **19 / 3.3** | 11-15 20:12 | 收紧自动学习集合到 `pm list packages -3` 语义（`FLAG_SYSTEM == 0`），不再把 ~13 个 `FLAG_UPDATED_SYSTEM_APP` 系统更新包当作自装应用，避免误拉系统界面；新增只读核查脚本 `verify_autolearn.py` | 设备实测 `userApps=15` 与 `pm -3`（16 个含服务自身、15 个可学习）一致；唤醒回到 `com.cctv.yangshipin.app.androidq` 的 `DetailActivity`，8 次 task reuse、`myDV=0`、无 fallback；设备内 `base.apk` 哈希与本地一致 `4a50c6b6…3ee` |
+| **v4.3** | **20 / 3.4** | 11-15 21:41 | **电视端版本横幅**：TCL 确认框文案写死，改 label / 文件名 / 协议字段 / 系统通知都无效（真机 UI dump 取证）。服务新增动态注册的 `PUSH_BANNER` 广播接收器 + `TYPE_ACCESSIBILITY_OVERLAY` 左下角横幅；`push_apk.py` 在发 `INSTALL` 帧前用 adb 显式广播触发，横幅显示应用名 / `versionName` / `versionCode`。**v4.0 任务栈复用与 v4.2.1 自动学习逻辑零改动**，清单未新增任何组件 / HOME / LAUNCHER / `<queries>` | 同屏截图实证：右上角固定文案弹窗 + 左下角 `myDV Resume v4.3 / versionName 3.4 / versionCode 20` 横幅**零重叠**，自动点「拒绝」成功说明弹窗仍可交互；`userApps=15`、`v3 BOUND`、哈希 `39b03d28…a0a` 与本地一致 |
 
 ---
 
@@ -112,9 +113,10 @@ launched com.cctv.yangshipin.app.androidq (task reuse) top=...DetailActivity  (x
 | v4.0 | `bdc3c83c…85d3` | 20946 B |
 | **v4.1** | **`bf40c492…1c5`** | **20946 B** |
 | v4.2（中间构建，成品未归档） | `79cbd45c…e63` | 25042 B |
-| **v4.2.1** | **`4a50c6b6…3ee`** | **25042 B** |
+| v4.2.1 | `4a50c6b6…3ee` | 25042 B |
+| **v4.3** | **`39b03d28…a0a`** | **29138 B** |
 
-所有版本 V1/V2/V3 签名通过，清单均不含 HOME / LAUNCHER / `<queries>` 声明（否则会触发 TCL 签名门）。v4.2 起新增的 `QUERY_ALL_PACKAGES` 是普通 `<uses-permission>`，v3.9.1 已验证验证器接受。v4.2 之后 APK 变大是因为新增自动学习代码使 `classes.dex` 从 ~24 KB 增至 29840 B。
+所有版本 V1/V2/V3 签名通过，清单均不含 HOME / LAUNCHER / `<queries>` 声明（否则会触发 TCL 签名门）。v4.2 起新增的 `QUERY_ALL_PACKAGES` 是普通 `<uses-permission>`，v3.9.1 已验证验证器接受。v4.2 之后 APK 变大是因为新增自动学习代码使 `classes.dex` 从 ~24 KB 增至 29840 B，v4.3 再加横幅代码后为 33576 B。
 
 
 ## 工具侧修复（不改 APK 版本）
@@ -124,4 +126,5 @@ launched com.cctv.yangshipin.app.androidq (task reuse) top=...DetailActivity  (x
 | 2026-11-15 | `scripts/push_apk.py` | 安装成功后不再立即关闭 tcast socket 与 APK HTTP server：新增 `finish()` 优雅收尾（`GRACE_SECONDS = 10`，保持 `150>>` 心跳、记录 `late TV state`），修复「安装完成瞬间闪出下载失败」的假提示；并修正 `stage=2` 未真正切换到下一个 URL 的逻辑。v4.2 / v4.2.1 两次推送均实测 `stage=5 / installed` 且无假提示。根因与日志证据见 [docs/troubleshooting.md](docs/troubleshooting.md)。 |
 | 2026-11-15 | `scripts/build_apk.py` | 构建日志脱敏：`run()` 现在把命令行里的 `--ks-pass pass:xxx` / `--key-pass pass:xxx` 打印成 `pass:<REDACTED>`，子进程输出同样过滤。原实现会把签名口令原样打到 stdout/CI 日志里，是一个真实的凭据泄漏点（本次构建因此触发内容安全拦截）。 |
 | 2026-11-15 | `scripts/verify_autolearn.py`（新增）、`scripts/push_apk.py` | 新增只读核查脚本：版本 / 无障碍绑定 / 自动学习开关 / 设备自装应用数 / 扫描与学习日志 / 唤醒目标 / fallback 计数；支持 `--auto-learn-on/off`、`--exclude`、`--allow-autostart`（可选冷启动 appops）、`--clear-log`、`--follow`。`push_apk.py` 的 `VERSION` 随 versionCode 同步到 `19`。 |
-| 2026-11-15 | `scripts/push_apk.py` | 修复「推送时看不到版本号」。根因：tcast `INSTALL` 帧的 `versionCode` 字段 TCL 弹窗不渲染，且脚本 `VERSION` 是硬编码、控制台也不打印。现改为从签名 APK 自动读取版本（aapt2 badging → 清单兜底），删除硬编码常量；推送前打印含 `versionCode` / `versionName` / sha256 / 设备已装版本的横幅，成功后打印 `VERSION CHECK` before → after；弹窗 label 拼成 `myDV Resume 3.3 / vc19 (v4.2.1)`，下载文件名带 `v3.3-vc19`（字节副本，退出自动删除）。新增 `--info-only`、`--plain-label`。**APK 无改动，设备仍是 v4.2.1（19 / 3.3）**。 |
+| 2026-11-15 | `scripts/push_apk.py` | 从签名 APK 自动读取版本（aapt2 badging → 清单兜底），删除硬编码 `VERSION`；推送前打印含 `versionCode` / `versionName` / sha256 / 设备已装版本的横幅，成功后打印 `VERSION CHECK` before → after；label 拼上版本、下载文件名带版本（字节副本，退出自动删除）。新增 `--info-only`、`--plain-label`。**APK 无改动**。⚠️ 后续 21:12 真机 UI dump 证明 TCL 弹窗文案写死，label / 文件名**都不会显示**，这一轮只解决了 PC 控制台可见性；电视端由 v4.3 横幅真正解决。 |
+| 2026-11-15 | `scripts/push_apk.py`、`apk/src/.../ResumeService.java`、`apk/AndroidManifest.xml` | **v4.3 电视端版本横幅**：脚本在发 `INSTALL` 帧前广播 `com.wb.mydvresume.PUSH_BANNER`（ASCII extras），服务动态注册 receiver 并用 `TYPE_ACCESSIBILITY_OVERLAY` 在左下角画横幅；新增 `--banner-only` / `--hide-banner`；已装 `versionCode < 20` 时跳过广播并提示（首次升级时旧服务无接收器）；logcat 校验改为读完整 tag 过滤缓冲并匹配 `versionCode`（`-t N` 先截断再过滤会误报 `NOT drawn`）。升 `20 / 3.4`，归档 `MyDvResume-vc20.apk`。 |

@@ -1,7 +1,7 @@
 # 服务原理
 
 > 面向想改代码的人。完整实现见 [`apk/src/com/wb/mydvresume/ResumeService.java`](../apk/src/com/wb/mydvresume/ResumeService.java)。
-> 当前版本 v4.2.1（`versionCode 19 / 3.3`，自动学习白名单）。
+> 当前版本 v4.3（`versionCode 20 / 3.4`，自动学习白名单 + 电视端版本横幅）。
 
 ## 1. 整体架构
 
@@ -149,3 +149,27 @@ isAllowed() = 静态白名单 ∪ dynamicAllow
 **配置**：`wb_auto_learn=0` 关闭动态学习（退回 v4.1 静态行为）；`wb_learn_exclude=<csv>` 排除指定包。`SKIP_PKGS` 硬编码排除桌面、安装器、系统 UI、服务自身。
 
 **不能自动的部分**：TCL 的 `APP_AUTO_START` / `APP_ASSOC_START` appops 需要 shell 权限，第三方应用无法给别的应用授权。「待机 → 唤醒」主路径完全脱离电脑；**断电冷开机**自动进新装应用可选跑一次 `verify_autolearn.py --allow-autostart`。完整原理与实测日志见 [CHANGELOG.md 的 v4.2 章节](../CHANGELOG.md)。
+
+## 11. v4.3：推送时的电视端版本横幅
+
+TCL 的多屏互动安装确认框文案写死在系统资源里（只有 `tv_title` / `tv_content` / 两个按钮 / 图标），协议字段（label、`versionCode`、文件名、`sizeMB`）、`cmd notification post` 通知和展开通知面板都无法注入应用名或版本。所以版本信息由服务自己画：
+
+```text
+push_apk.py
+  └─ adb shell am broadcast -a com.wb.mydvresume.PUSH_BANNER
+       --es tag v4.3 --es vn 3.4 --es vc 20 --ei duration 45
+                      │  (显式广播；extras 全 ASCII，中文提示编译在服务里)
+                      ▼
+ResumeService.bannerReceiver (动态注册于 onServiceConnected)
+  └─ showBanner(): WindowManager.addView(TextView,
+         TYPE_ACCESSIBILITY_OVERLAY,
+         FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCHABLE | NOT_TOUCH_MODAL)
+       gravity = BOTTOM|LEFT, x=48, y=48
+       handler.postDelayed(hideBanner, 45s)
+```
+
+- **为什么用 `TYPE_ACCESSIBILITY_OVERLAY`**：该窗口类型专供无障碍服务，不需要额外运行时授权；清单因此不新增组件、不碰 HOME / LAUNCHER / `<queries>`，TCL 签名门不受影响。
+- **为什么不挡操作**：`NOT_FOCUSABLE` 让右上角弹窗保持焦点，遥控器「右 → 同意」照常；`NOT_TOUCHABLE` 让窗口不接收触摸。真机同屏截图实证两者零重叠，且自动点「拒绝」可成功取消安装。
+- **生命周期**：横幅是纯 UI，和唤醒逻辑完全隔离；`onUnbind()` 会注销 receiver 并移除窗口。覆盖安装会杀掉服务进程，横幅随之消失（用户按「同意」前已看到，符合预期）。
+- **首次升级边界**：v4.2.1 的服务没有该 receiver，`push_apk.py` 检测到已装 `versionCode < 20` 会跳过广播并打印 `TV banner: skipped`，下次推送起正常。
+- **唤醒逻辑零改动**：`launch()` 的任务栈复用、5 次纠正、`quietMyDv()`、自动学习集合与六级组件解析全部保持 v4.2.1 原样。核查命令见 [build-and-push.md](build-and-push.md)。

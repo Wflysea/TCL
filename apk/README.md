@@ -6,8 +6,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `AndroidManifest.xml` | 当前 `versionCode 19 / versionName 3.3`（v4.2.1 自动学习白名单）。四项权限：`SYSTEM_ALERT_WINDOW`、`PACKAGE_USAGE_STATS`、`KILL_BACKGROUND_PROCESSES`、`QUERY_ALL_PACKAGES`；service 用 `BIND_ACCESSIBILITY_SERVICE` 保护并 `exported=true`。`QUERY_ALL_PACKAGES` 是普通 `<uses-permission>`（v3.9.1 已验证 TCL 验证器接受），用于让自动学习看见新装应用；**不是** `<queries>` |
-| `src/com/wb/mydvresume/ResumeService.java` | 全部逻辑：唤醒检测、任务栈恢复、冷启动目标、**自动学习白名单**（全量扫描 + `PACKAGE_ADDED` 增量 + 组件缓存）、myDV 静音、系统设置读写 |
+| `AndroidManifest.xml` | 当前 `versionCode 20 / versionName 3.4`（v4.3 电视端版本横幅）。v4.3 的广播接收器是**动态注册**的，清单因此没有新增组件，也不含 HOME / LAUNCHER / `<queries>`。四项权限：`SYSTEM_ALERT_WINDOW`、`PACKAGE_USAGE_STATS`、`KILL_BACKGROUND_PROCESSES`、`QUERY_ALL_PACKAGES`；service 用 `BIND_ACCESSIBILITY_SERVICE` 保护并 `exported=true`。`QUERY_ALL_PACKAGES` 是普通 `<uses-permission>`（v3.9.1 已验证 TCL 验证器接受），用于让自动学习看见新装应用；**不是** `<queries>` |
+| `src/com/wb/mydvresume/ResumeService.java` | 全部逻辑：唤醒检测、任务栈恢复、冷启动目标、**自动学习白名单**（全量扫描 + `PACKAGE_ADDED` 增量 + 组件缓存）、**v4.3 推送横幅**（`PUSH_BANNER` 动态广播 + `TYPE_ACCESSIBILITY_OVERLAY`）、myDV 静音、系统设置读写 |
 | `res/xml/resume_config.xml` | 无障碍服务配置（`canRetrieveWindowContent` 当前**未**开启） |
 | `res/values/strings.xml` | 服务标签 / 描述（电视上显示为「myDV Resume」） |
 | `build_apk.py` | 零依赖构建+签名脚本；命令行日志会把签名口令打印为 `pass:<REDACTED>` |
@@ -49,6 +49,8 @@ python build_apk.py
 
 ```bash
 cd E:\WorkBuddy\闲聊\_tmp\tcl75v8l_backup
-python push_apk.py      # 电视端按「右 → 同意」
+python push_apk.py      # 电视端按「右 → 同意」；左下角横幅显示应用名与版本号
 python finalize_resume.py   # 覆盖安装后必须重绑
 ```
+
+v4.3 起推送前会广播 `PUSH_BANNER` 让服务画出版本横幅；`--banner-only` 可只显示横幅不安装。TCL 弹窗本身文案写死，横幅是唯一能在电视上看到版本的途径，见 [docs/build-and-push.md](../docs/build-and-push.md)。

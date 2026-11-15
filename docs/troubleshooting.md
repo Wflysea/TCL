@@ -156,3 +156,33 @@ cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.in
 本地用 `socketpair()` 模拟验证过两种情形：电视端主动关会话 → 0.3 秒干净退出；电视端无响应 → 超时后也能正常关闭 HTTP server 并返回 0。
 
 **注意**：这个提示与 v3.5 那次「推送失败」不是同一回事，也不要往「TCL 签名门 / HOME 声明 / 多 URL 重试」方向排查——那些会出现 `stage=4` 或 `stage=2`，而这里下载是 200、进度到 100%、`PACKAGE_ADDED` 已发出。
+
+## 症状：推送到电视时看不到应用名称和版本号（v4.3 已修）
+
+**现象**：PC 控制台能看到版本，电视上却只有「多屏互动 / 1 正在发起应用推送，同意后将接收应用并进行安装 / 拒绝 / 同意」，没有应用名、没有版本号。
+
+**这不是脚本没传**：tcast `223>>INSTALL` 帧的第 7 个字段确实是 `versionCode`，label 字段也携带应用名。但 2026-11-15 21:12 的 UI dump 证明 `com.tcl.MultiScreenInteraction_TV` 的确认框是**固定布局 + 固定文案**：只有 `iv_icon`、`tv_title`、`tv_content`、`btn_negative`、`btn_positive`，没有任何应用名 / 版本控件。逐项实测结果：
+
+| 尝试 | 结果 |
+| --- | --- |
+| 把版本拼进 label | 弹窗文字一字不变 |
+| 把版本写进下载文件名 | 弹窗文字一字不变 |
+| 把 `sizeMB` 槽位换成自定义文本 | `tv_content` 一字不变 |
+| `cmd notification post -t '应用名+版本'` | 通知 importance=3 进通知中心，屏幕无横幅 |
+| `cmd statusbar expand-notifications` | 电视不渲染通知面板 |
+| `APPLICATION_DETAILS_SETTINGS` | 该系统 Activity 不存在 |
+
+**结论**：协议字段、系统通知都改不动这个弹窗，别再试。**v4.3 的解法**是另画一层 UI —— `push_apk.py` 在发 `INSTALL` 帧前广播 `PUSH_BANNER`，无障碍服务用 `TYPE_ACCESSIBILITY_OVERLAY` 在左下角显示应用名 + `versionName` + `versionCode`，45 秒后自动消失；弹窗在右上角，两者零重叠，遥控器按键不受影响。详见 [build-and-push.md 版本显示章节](build-and-push.md) 与 [architecture.md 第 11 节](architecture.md)。
+
+**若横幅没出现，按顺序查**：
+
+```bash
+adb shell dumpsys accessibility | grep -A3 "Bound services"     # 服务必须 Bound
+adb shell logcat -d -s MyDvResume:V | grep "banner shown"       # 是否收到广播并绘制
+python push_apk.py --banner-only                                # 只画横幅、不安装
+```
+
+- 推送脚本打印 `TV banner: skipped` → 电视上还是 v4.2.1（旧服务无 receiver），**下一次**推送才生效；
+- 打印 `NOT confirmed in logcat` → 查无障碍绑定，或 `am broadcast` 是否被系统拦下；
+- 日志校验不要用 `logcat -t N -s TAG`（先按行数截断再过滤 tag，会漏掉横幅日志）；
+- `--hide-banner` 可立即收起横幅。

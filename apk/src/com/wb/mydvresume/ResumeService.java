@@ -16,14 +16,23 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.View;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import android.widget.TextView;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
@@ -68,6 +77,20 @@ import java.util.List;
  * It only kills BACKGROUND processes and is skipped whenever myDV is the
  * intended/foreground app, so the verified myDV resume is unaffected.
  * Configurable via Settings.System "wb_quiet_mydv" (0/off disables).
+ *
+ * v4.3: ON-TV PUSH BANNER. The TCL 多屏互动 confirm dialog has FIXED text
+ * (uiautomator dump on 2026-11-15: tv_title="多屏互动", tv_content is a
+ * hardcoded sentence, only two buttons + an icon). It renders NEITHER the
+ * tcast INSTALL frame's label/versionCode NOR a shell notification nor the
+ * expanded notification panel. So push_apk.py now sends an explicit broadcast
+ * just BEFORE the INSTALL frame, and this service draws a
+ * TYPE_ACCESSIBILITY_OVERLAY banner in the bottom-left corner -- the dialog
+ * sits at [1386,32][1890,336], so there is no overlap. The window is
+ * NOT_FOCUSABLE|NOT_TOUCHABLE, so remote keys still reach 同意. It auto-hides
+ * after 30s or on an explicit hide broadcast. Only ASCII extras cross adb;
+ * the Chinese hint line is compiled into the service. NO manifest receiver,
+ * HOME, LAUNCHER or <queries> was added (TCL signature gate untouched), and
+ * the v4.0 task-reuse launch + v4.2.1 auto-learning logic are unchanged.
  *
  * v4.2.1: tighten the learned set to `pm list packages -3` semantics
  * (FLAG_SYSTEM == 0). v4.2 also counted FLAG_UPDATED_SYSTEM_APP and saw 29
@@ -170,6 +193,20 @@ public class ResumeService extends AccessibilityService {
             "android"
     };
 
+    // ---- v4.3: on-TV push banner -----------------------------------------
+    /** Explicit broadcast from push_apk.py, sent just before the INSTALL frame. */
+    private static final String BANNER_ACTION = "com.wb.mydvresume.PUSH_BANNER";
+    private static final String EXTRA_HIDE = "hide";
+    private static final String EXTRA_APP = "app";
+    private static final String EXTRA_TAG = "tag";
+    private static final String EXTRA_VN = "vn";
+    private static final String EXTRA_VC = "vc";
+    private static final String EXTRA_NOTE = "note";
+    private static final String EXTRA_DURATION = "duration";
+    private static final int BANNER_DEFAULT_SECONDS = 30;
+    /** Compiled in: avoids pushing non-ASCII text through adb shell. */
+    private static final String BANNER_HINT = "正在推送安装 · 请在弹窗按「右 → 同意」";
+
     private static final String DEFAULT_BOOT_TARGET = "com.github.mytv.dv";
     private static final String[] DEFAULT_WHITELIST = {
             "com.github.mytv.dv",
@@ -247,6 +284,16 @@ public class ResumeService extends AccessibilityService {
     private String cachedExclude = null;
     private long cachedExcludeAt = 0L;
 
+    // v4.3: overlay banner state, main-thread only.
+    private boolean bannerReceiverRegistered = false;
+    private View bannerView = null;
+    private final Runnable bannerHide = new Runnable() {
+        @Override
+        public void run() {
+            hideBanner();
+        }
+    };
+
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
@@ -290,6 +337,28 @@ public class ResumeService extends AccessibilityService {
         }
     };
 
+    /** v4.3: explicit broadcast from push_apk.py. Dynamically registered, so
+     *  the manifest gains NO intent-filter / HOME / LAUNCHER / <queries> and
+     *  the TCL signature gate is untouched. */
+    private final BroadcastReceiver bannerReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            if (i == null) {
+                return;
+            }
+            if (i.getBooleanExtra(EXTRA_HIDE, false)) {
+                hideBanner();
+                return;
+            }
+            showBanner(i.getStringExtra(EXTRA_APP),
+                    i.getStringExtra(EXTRA_TAG),
+                    i.getStringExtra(EXTRA_VN),
+                    i.getStringExtra(EXTRA_VC),
+                    i.getStringExtra(EXTRA_NOTE),
+                    i.getIntExtra(EXTRA_DURATION, BANNER_DEFAULT_SECONDS));
+        }
+    };
+
     @Override
     public void onServiceConnected() {
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
@@ -317,6 +386,10 @@ public class ResumeService extends AccessibilityService {
             pf.addDataScheme("package");
             registerReceiver(packageReceiver, pf);
             packageReceiverRegistered = true;
+        }
+        if (!bannerReceiverRegistered) {
+            registerReceiver(bannerReceiver, new IntentFilter(BANNER_ACTION));
+            bannerReceiverRegistered = true;
         }
 
         // v4.2: full scan at every bind. Covers apps installed while the
@@ -347,7 +420,7 @@ public class ResumeService extends AccessibilityService {
         lastInteractive = true;
         handler.postDelayed(pollRunnable, POLL_MS);
 
-        Log.i(TAG, "service connected v4.2.1 (auto-learn), userApps="
+        Log.i(TAG, "service connected v4.3 (auto-learn + push banner), userApps="
                 + dynamicAllow.size() + ", prevBindGap="
                 + (prevBind > 0L ? (now - prevBind) : 0L)
                 + "ms, bootId=" + (curBoot.length() > 0 ? curBoot.substring(0, 8) : "n/a")
@@ -1307,6 +1380,89 @@ public class ResumeService extends AccessibilityService {
         }
     }
 
+    // ---------------- v4.3: on-TV push banner ----------------------------
+
+    /**
+     * Draw the version banner. TYPE_ACCESSIBILITY_OVERLAY is reserved for
+     * accessibility services, so no extra runtime permission is needed.
+     * NOT_FOCUSABLE|NOT_TOUCHABLE keeps the TCL 多屏互动 dialog in focus:
+     * remote keys (Right -> 同意 -> OK) still reach it normally.
+     */
+    private void showBanner(String app, String tag, String vn, String vc,
+                            String note, int seconds) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) {
+            Log.w(TAG, "banner unsupported on API " + Build.VERSION.SDK_INT);
+            return;
+        }
+        String name = (app == null || app.length() == 0) ? "myDV Resume" : app;
+        String release = (tag == null) ? "" : tag.trim();
+        String version = (vn == null || vn.length() == 0) ? "?" : vn;
+        String code = (vc == null || vc.length() == 0) ? "?" : vc;
+        String hint = (note == null || note.length() == 0) ? BANNER_HINT : note;
+        String text = name + (release.length() > 0 ? "   " + release : "")
+                + "\nversionName " + version + "   |   versionCode " + code
+                + "\n" + hint;
+        try {
+            WindowManager wm = (WindowManager)
+                    getSystemService(Context.WINDOW_SERVICE);
+            if (wm == null) {
+                return;
+            }
+            hideBanner();  // replace any previous banner and cancel its timer
+
+            TextView tv = new TextView(this);
+            tv.setText(text);
+            tv.setTextColor(Color.WHITE);
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+            tv.setLineSpacing(8f, 1f);
+            tv.setPadding(28, 18, 28, 18);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(0xE6111826);
+            bg.setCornerRadius(18f);
+            bg.setStroke(2, 0xFF4FC3F7);
+            tv.setBackground(bg);
+
+            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT);
+            lp.gravity = Gravity.BOTTOM | Gravity.LEFT;
+            lp.x = 48;
+            lp.y = 48;
+            wm.addView(tv, lp);
+            bannerView = tv;
+            int secs = (seconds > 0 && seconds <= 300)
+                    ? seconds : BANNER_DEFAULT_SECONDS;
+            handler.postDelayed(bannerHide, secs * 1000L);
+            Log.i(TAG, "banner shown (" + secs + "s): "
+                    + text.replace("\n", " | "));
+        } catch (Throwable t) {
+            Log.w(TAG, "banner failed: " + t);
+            bannerView = null;
+        }
+    }
+
+    private void hideBanner() {
+        handler.removeCallbacks(bannerHide);
+        if (bannerView == null) {
+            return;
+        }
+        try {
+            WindowManager wm = (WindowManager)
+                    getSystemService(Context.WINDOW_SERVICE);
+            if (wm != null) {
+                wm.removeView(bannerView);
+            }
+        } catch (Throwable ignored) {
+        }
+        bannerView = null;
+    }
+
     @Override
     public void onInterrupt() {
     }
@@ -1328,6 +1484,14 @@ public class ResumeService extends AccessibilityService {
             }
             packageReceiverRegistered = false;
         }
+        if (bannerReceiverRegistered) {
+            try {
+                unregisterReceiver(bannerReceiver);
+            } catch (Throwable ignored) {
+            }
+            bannerReceiverRegistered = false;
+        }
+        hideBanner();
         return super.onUnbind(intent);
     }
 }

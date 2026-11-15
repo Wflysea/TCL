@@ -6,11 +6,11 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `AndroidManifest.xml` | 当前 `versionCode 17 / versionName 3.1`（v4.1：修复唤醒目标解析，补红果TV 组件映射）。三项权限：`SYSTEM_ALERT_WINDOW`、`PACKAGE_USAGE_STATS`、`KILL_BACKGROUND_PROCESSES`；service 用 `BIND_ACCESSIBILITY_SERVICE` 保护并 `exported=true`。v4.0 已移除 v3.9.1 临时加的 `QUERY_ALL_PACKAGES` |
-| `src/com/wb/mydvresume/ResumeService.java` | 全部逻辑：唤醒检测、任务栈恢复、冷启动目标、白名单、myDV 静音、系统设置读写 |
+| `AndroidManifest.xml` | 当前 `versionCode 19 / versionName 3.3`（v4.2.1 自动学习白名单）。四项权限：`SYSTEM_ALERT_WINDOW`、`PACKAGE_USAGE_STATS`、`KILL_BACKGROUND_PROCESSES`、`QUERY_ALL_PACKAGES`；service 用 `BIND_ACCESSIBILITY_SERVICE` 保护并 `exported=true`。`QUERY_ALL_PACKAGES` 是普通 `<uses-permission>`（v3.9.1 已验证 TCL 验证器接受），用于让自动学习看见新装应用；**不是** `<queries>` |
+| `src/com/wb/mydvresume/ResumeService.java` | 全部逻辑：唤醒检测、任务栈恢复、冷启动目标、**自动学习白名单**（全量扫描 + `PACKAGE_ADDED` 增量 + 组件缓存）、myDV 静音、系统设置读写 |
 | `res/xml/resume_config.xml` | 无障碍服务配置（`canRetrieveWindowContent` 当前**未**开启） |
 | `res/values/strings.xml` | 服务标签 / 描述（电视上显示为「myDV Resume」） |
-| `build_apk.py` | 零依赖构建+签名脚本 |
+| `build_apk.py` | 零依赖构建+签名脚本；命令行日志会把签名口令打印为 `pass:<REDACTED>` |
 
 ## 构建
 
@@ -27,7 +27,8 @@ python build_apk.py
 
 - JDK 25 下 D8/R8 会 NPE 崩溃，所以刻意用 `--release 8` 编译出 class version 52 再走老 `dx`。
 - 源码路径曾因中文路径导致 aapt2 出错，故工作目录固定在纯 ASCII 的 `C:\Temp\wbapk`。
-- **清单里绝对不要加** HOME / LAUNCHER / LEANBACK_LAUNCHER / `<queries>`，会触发 TCL 安装签名门。
+- **清单里绝对不要加** HOME / LAUNCHER / LEANBACK_LAUNCHER / `<queries>`，会触发 TCL 安装签名门；`QUERY_ALL_PACKAGES` 作为普通 `<uses-permission>` 是安全的（v3.9.1、v4.2 两次验证器均接受）。
+- 源码里的 `CATEGORY_LAUNCHER`（Java 字符串）与清单里的声明是两回事：前者用于解析组件，验证器只检查清单 XML。
 
 ## 签名凭据（不入库）
 

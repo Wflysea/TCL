@@ -8,6 +8,8 @@
 | `v3.6/` | `v36_ResumeService.java` | 用户实测可用的基准版（vc10 / 1.9） |
 | `v3.9.1/` | `v391_ResumeService.java`、`v391_AndroidManifest.xml` | 加了 `QUERY_ALL_PACKAGES` 的隐式 launcher intent 版（vc14 / 2.3） |
 | `v3.10/` | `v310_ResumeService.java`、`v310_AndroidManifest.xml` | 完整回退到 v3.6 行为（vc15 / 2.4） |
+| `v4.0/` | `v40_ResumeService.java`、`v40_AndroidManifest.xml` | 任务栈复用方案（vc16 / 3.0），用户实测通过 |
+| `v4.1/` | `v41_ResumeService.java`、`v41_AndroidManifest.xml` | 待机记录优先选目标 + 补红果TV 组件（vc17 / 3.1） |
 
 当前版本源码在 [`apk/`](../apk/README.md)。
 

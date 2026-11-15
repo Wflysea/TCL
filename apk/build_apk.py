@@ -10,6 +10,7 @@ NOTE: this file is published in a PUBLIC repository. The signing keystore
 apk/README.md for how to recreate them locally.
 """
 import os
+import re
 import shutil
 import subprocess
 import zipfile
@@ -64,11 +65,17 @@ def load_keystore_password():
 PASSWORD = load_keystore_password()
 
 
+def redact(text):
+    """Never echo the keystore password into build logs / CI output."""
+    return re.sub(r"(pass:)[^\s\"]+", r"\1<REDACTED>", text)
+
+
 def run(label, cmd, cwd=None):
     print("=== %s ===" % label, flush=True)
-    print("   ", " ".join('"%s"' % c if " " in c else c for c in cmd), flush=True)
+    shown = " ".join('"%s"' % c if " " in c else c for c in cmd)
+    print("   ", redact(shown), flush=True)
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, timeout=300)
-    out = (p.stdout + p.stderr).decode("utf-8", "replace")
+    out = redact((p.stdout + p.stderr).decode("utf-8", "replace"))
     if out.strip():
         for line in out.strip().splitlines()[:25]:
             print("   ", line, flush=True)

@@ -38,7 +38,7 @@ OTA 保持禁用状态，不做降级刷包。
 2. **别让电视卫士清后台**：`com.tcl.guard` 保持禁用，服务与目标播放器在电池白名单里。
 3. **别降级刷包**，OTA 保持禁用。
 4. **升级固件后复查**：系统设置、appops、电池白名单、无障碍绑定都可能被重置，重跑 `finalize_resume.py` + `boot_target.py --status`。
-5. **万一断电后想自动打开 myDV**：冷启动目标是 `wb_boot_target`（默认 myDV）；白名单内才会记忆上次应用，否则回退默认。
+5. **万一断电后想自动打开 myDV**：冷启动目标是 `wb_boot_target`（默认 myDV）；v4.2 起静态白名单 ∪ 自动学习的自装应用才会记忆上次应用，否则回退默认。新装应用若冷启动拉不起来，可选跑一次 `verify_autolearn.py --allow-autostart` 补 TCL 的 appops。
 6. 每次覆盖安装 APK 后重跑 `finalize_resume.py`，然后跑一遍核查清单。
 
 ## 6. 已取消的方案

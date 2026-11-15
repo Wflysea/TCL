@@ -84,6 +84,8 @@ adb shell "settings get system wb_exact_resume"
 
 一键脚本：`python boot_target.py --status / --list-apps / --all-apps / --allow-autostart / --quiet-on / --quiet-off / --exact-on / --exact-off / --wake-report / --boot-report`。
 
+v4.2 自动学习：`python verify_autolearn.py --follow`（只读核查）/`--auto-learn-on` / `--auto-learn-off` / `--exclude "包1,包2"` / `--clear-log` / `--allow-autostart`（可选冷启动授权）。装新应用后**不需要**再跑 `--all-apps`。
+
 ## 启动应用（诊断用，注意权限边界）
 
 ```bash

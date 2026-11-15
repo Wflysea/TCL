@@ -99,7 +99,9 @@ python verify_quiet.py --report
 
 v4.0 应看到连续多次 `launched ... (task reuse)`、`legacy fallback=0`、`SecurityException=0`。
 
-v4.1 起还应确认 `WAKE via ... target=` 与**待机前正在用的应用**一致，`launched` 的包名相同；若仍是 `com.github.mytv.dv`，查 `WAKE candidate=... intent=null` 和静态组件表是否覆盖该包。
+v4.1 起还应确认 `WAKE via ... target=` 与**待机前正在用的应用**一致，`launched` 的包名相同；若仍是 `com.github.mytv.dv`，查 `WAKE candidate=... intent=null` 和组件解析是否覆盖该包。
+
+v4.2 起跑 `python verify_autolearn.py --follow`：确认 `versionCode=19`、服务 Bound、`auto-learn scan (bind): 15 user apps`（与 `pm list packages -3` 一致）、`no launchable component / legacy fallback = 0`。装了新应用后应出现 `auto-learn PACKAGE_ADDED: <包名> component=...`；用户做一次真实「暂停 → 待机 → 唤醒」后应出现 `WAKE target from standby record=<新包名>` 与对应的 `launched ... (task reuse)`。
 
 ## 6. 真实待机唤醒测试（必须人工）
 
@@ -124,7 +126,7 @@ python restore_tcl.py --all     # 全部还原
 
 ```bash
 cd E:\WorkBuddy\闲聊\TCL
-python scripts/sync_and_push.py --message "v4.1 xxx"
+python scripts/sync_and_push.py --message "v4.2.1 auto-learning whitelist"
 ```
 
 脚本会自动归档新 APK、更新源码/脚本快照、记录版本日志并 push 到 `main`。

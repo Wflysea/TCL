@@ -18,6 +18,8 @@
 | **v3.10** | **15 / 2.4** | 11-14 18:58 | 用户要求「参考 3.6」：从历史记录里提取 v3.6 的 887 行完整源码原样覆盖，清单也回退（移除 `QUERY_ALL_PACKAGES`），只改注释与日志标记 | 逻辑 100% 复原、5 次纠正节奏恢复，**但实测仍落在首页** ⇒ 证明问题不在服务代码改动，而在「同一份代码遇到不同的待机页面状态」 |
 | **v4.0** | **16 / 3.0** | 11-14 19:38 | **找到真因并修复**：显式组件 + `ACTION_MAIN` + `CATEGORY_LAUNCHER` + `NEW_TASK\|RESET_TASK_IF_NEEDED\|NO_ANIMATION`（**去掉 `SINGLE_TOP`**），把整个任务栈原样带回前台而不新建首页；删除每次必抛异常的精确恢复分支；恢复 5 次纠正并取消 v3.8 的跳过判断；新增 legacy fallback | 重绑实测 10 次 `task reuse`、`fallback=0`、`SecurityException=0`；`mCurrentFocus` 保持在 `DetailActivity`，栈 = Home → History → Detail，**无多余首页**；**11-14 20:09 用户真实遥控器「暂停 → 待机 → 唤醒」实测通过 ✅**（见下节） |
 | **v4.1** | **17 / 3.1** | 11-15 19:22 | 修复「唤醒拉错应用」：静态组件表补 `rocks.aston.hongguotv/.MainActivity`；`resolveWakeTarget()` 优先采用 SCREEN_OFF 持久化的待机包名（带 7 天新鲜度校验）；`resolveBootIntent()` 增加从 UsageEvents / 待机记录取真实 Activity 类的通用兜底 | 重绑实测两段唤醒共 **10 次 `launched rocks.aston.hongguotv`**、`mydv_launched=0`、`legacy fallback=0`；目标与待机前一致，设备哈希与本地一致 `bf40c492…1c5` |
+| **v4.2** | **18 / 3.2** | 11-15 20:08 | **自动学习白名单（中间构建）**：清单加 `QUERY_ALL_PACKAGES`；绑定时全量扫描自装应用、`PACKAGE_ADDED/REPLACED/REMOVED` 增量学习并缓存 launcher 组件；`isAllowed()` = 静态白名单 ∪ 运行时自装集合；`resolveBootIntent()` 改为六级组件解析。**v4.0 任务栈复用启动逻辑零改动** | 首次扫描 29 个包、缓存 16 个组件；重绑实测 11 次 `launched rocks.aston.hongguotv (task reuse)`、`myDV=0`、无 fallback；随后发现 29 个含系统更新包，需收紧 |
+| **v4.2.1** | **19 / 3.3** | 11-15 20:12 | 收紧自动学习集合到 `pm list packages -3` 语义（`FLAG_SYSTEM == 0`），不再把 ~13 个 `FLAG_UPDATED_SYSTEM_APP` 系统更新包当作自装应用，避免误拉系统界面；新增只读核查脚本 `verify_autolearn.py` | 设备实测 `userApps=15` 与 `pm -3`（16 个含服务自身、15 个可学习）一致；唤醒回到 `com.cctv.yangshipin.app.androidq` 的 `DetailActivity`，8 次 task reuse、`myDV=0`、无 fallback；设备内 `base.apk` 哈希与本地一致 `4a50c6b6…3ee` |
 
 ---
 
@@ -60,6 +62,44 @@
 
 **验证**：覆盖安装并重绑后，日志 `WAKE via rebind seq=1 target=rocks.aston.hongguotv`、`WAKE candidate=... intent=ComponentInfo{rocks.aston.hongguotv/rocks.aston.hongguotv.MainActivity}`；两段唤醒共 10 次 `launched rocks.aston.hongguotv (task reuse)`，`launched com.github.mytv.dv=0`；`mCurrentFocus` 保持在红果TV，栈里没有多压首页。首次重绑时 `fresh=false` 属预期（旧版本没有写时间戳），走了 `recentWhitelistedApp()` 兜底并正确解析；用户下一次真实待机后即会命中 `WAKE target from standby record=` 分支。
 
+## v4.2：自动学习白名单（装新应用不再需要电脑）
+
+**问题**：v4.1 的 `wb_boot_whitelist` 是 `boot_target.py --all-apps` 生成的一次性静态快照，`KNOWN_COMPONENTS` 也是手工维护的静态表。电视以后每装一个新应用，都得连电脑重跑脚本、甚至改源码补组件映射，否则唤醒会回退到 myDV。用户选择「B 自动学习版」。
+
+**做法**（`ResumeService.java`）：
+
+1. **看得见**：清单加 `android.permission.QUERY_ALL_PACKAGES`。这是普通安装时权限，v3.9.1 已实证 TCL 验证器接受；**不写 `<queries>`、不声明任何 LAUNCHER/HOME**，签名门不受影响。Android 11 包可见性由此打开，`getInstalledPackages()` / `getLaunchIntentForPackage()` 对别的包才有结果。
+2. **学得到**：`onServiceConnected()` 全量扫描一次 `pm -3` 语义的自装应用；动态注册 `PACKAGE_ADDED / PACKAGE_REPLACED / PACKAGE_REMOVED` 接收器做增量学习（动态注册不受 Android 8+ 隐式广播限制）；`SCREEN_OFF` 再扫一次作为兜底。结果存进 `dynamicAllow` 集合，并把每个包解析出的 launcher 组件以 `cmp.<pkg>` 缓存进 SharedPreferences，重启后仍在。
+3. **判得准**：`isAllowed()` = 静态 `wb_boot_whitelist` ∪ 动态自装集合；`lastAllowedForeground()` / `recordStandbyClass()` / `recentWhitelistedApp()` 全部改用它，所以新装应用会自动进入「待机前记录 → 唤醒目标」链路。桌面、安装器、系统 UI、服务自身由 `SKIP_PKGS` 硬排除。
+4. **拉得起**：`resolveBootIntent()` 改成六级解析 —— ① `getLeanbackLaunchIntentForPackage()` ② `getLaunchIntentForPackage()` ③ 限定包名的显式 `MAIN+LAUNCHER` 查询 ④ 静态组件表 ⑤ 缓存的已学组件 ⑥ `exported` 的 MAIN Activity / UsageEvents 观察类。**只取 `ComponentName`**。
+
+**关键约束**：`launch()` 的 v4.0 写法（显式组件 + `ACTION_MAIN` + `CATEGORY_LAUNCHER` + `NEW_TASK|RESET_TASK_IF_NEEDED|NO_ANIMATION`、**无 `SINGLE_TOP`**）、5 个纠正点、`quietMyDv()`、冷启动逻辑**一行未改**。自动学习只替换「组件从哪来」，不碰已实测通过的任务栈复用。
+
+**v4.2.1 收紧**：v4.2 初版把 `FLAG_UPDATED_SYSTEM_APP`（TCL 预装应用被 OTA 更新的那些）也算成自装应用，扫描到 29 个而不是 15 个；它们带 exported MAIN Activity，理论上可能被选成唤醒目标并拉起系统界面。改为严格 `FLAG_SYSTEM == 0`，与 `pm list packages -3` 对齐。静态白名单仍可显式覆盖任何这类应用。
+
+**配置**（`settings put system ...`，无需重绑）：
+
+| 键 | 含义 |
+| --- | --- |
+| `wb_auto_learn` | 默认开；`0` / `off` 退回 v4.1 的静态白名单行为 |
+| `wb_learn_exclude` | 永不恢复的包名，逗号分隔（即使它是自装应用） |
+
+**核查**：`python verify_autolearn.py --follow`（只读）会打印版本、无障碍绑定、两个开关、设备自装应用数、服务扫描结果、学到的新包、最近的唤醒决策与 `launched` 记录，并检查有无 `no launchable component` / `legacy fallback`。另可用 `--auto-learn-on/off`、`--exclude`、`--clear-log`。
+
+**实测**（2026-11-15，v4.2.1 / 19 / 3.3）：
+
+```
+auto-learn scan (bind): 15 user apps, 0 new components
+service connected v4.2.1 (auto-learn), userApps=15
+WAKE candidate=com.cctv.yangshipin.app.androidq intent=ComponentInfo{.../HomeActivity}
+WAKE class from usage events: com.github.tvbox.osc.ui.activity.DetailActivity
+launched com.cctv.yangshipin.app.androidq (task reuse) top=...DetailActivity  (x8)
+```
+
+`myDV=0`、`legacy fallback=0`、`no launchable component=0`；设备内 `base.apk` 与本地 APK 的 sha256 一致。首次重绑 `fresh=false` 属预期（旧的待机记录没有时间戳或已过期），**用户下一次真实「暂停 → 待机 → 唤醒」** 即会命中 `WAKE target from standby record=`。
+
+**边界**：`APP_AUTO_START` / `APP_ASSOC_START` 是 TCL 定制 appops，`cmd appops set` 需要 shell 权限，普通第三方应用无法给别的应用授权。所以「待机 → 唤醒」这条主路径已完全脱离电脑；但**断电冷开机**想自动进某个新装应用时，TCL 仍可能拦关联启动，可选跑一次 `python verify_autolearn.py --allow-autostart`（一次性、非必需）。
+
 ## APK 指纹
 
 | 版本 | sha256（前 8 位） | 大小 |
@@ -71,12 +111,16 @@
 | v3.10 | `548ce646…1960` | 20946 B |
 | v4.0 | `bdc3c83c…85d3` | 20946 B |
 | **v4.1** | **`bf40c492…1c5`** | **20946 B** |
+| v4.2（中间构建，成品未归档） | `79cbd45c…e63` | 25042 B |
+| **v4.2.1** | **`4a50c6b6…3ee`** | **25042 B** |
 
-所有版本 V1/V2/V3 签名通过，清单均不含 HOME / LAUNCHER / queries（否则会触发 TCL 签名门）。
+所有版本 V1/V2/V3 签名通过，清单均不含 HOME / LAUNCHER / `<queries>` 声明（否则会触发 TCL 签名门）。v4.2 起新增的 `QUERY_ALL_PACKAGES` 是普通 `<uses-permission>`，v3.9.1 已验证验证器接受。v4.2 之后 APK 变大是因为新增自动学习代码使 `classes.dex` 从 ~24 KB 增至 29840 B。
 
 
 ## 工具侧修复（不改 APK 版本）
 
 | 日期 | 文件 | 内容 |
 | --- | --- | --- |
-| 2026-11-15 | `scripts/push_apk.py` | 安装成功后不再立即关闭 tcast socket 与 APK HTTP server：新增 `finish()` 优雅收尾（`GRACE_SECONDS = 10`，保持 `150>>` 心跳、记录 `late TV state`），修复「安装完成瞬间闪出下载失败」的假提示；并修正 `stage=2` 未真正切换到下一个 URL 的逻辑。**APK 无任何改动，设备仍是 v4.1（17 / 3.1）**，下次推送自然生效，无需重新覆盖安装。根因与日志证据见 [docs/troubleshooting.md](docs/troubleshooting.md)。 |
+| 2026-11-15 | `scripts/push_apk.py` | 安装成功后不再立即关闭 tcast socket 与 APK HTTP server：新增 `finish()` 优雅收尾（`GRACE_SECONDS = 10`，保持 `150>>` 心跳、记录 `late TV state`），修复「安装完成瞬间闪出下载失败」的假提示；并修正 `stage=2` 未真正切换到下一个 URL 的逻辑。v4.2 / v4.2.1 两次推送均实测 `stage=5 / installed` 且无假提示。根因与日志证据见 [docs/troubleshooting.md](docs/troubleshooting.md)。 |
+| 2026-11-15 | `scripts/build_apk.py` | 构建日志脱敏：`run()` 现在把命令行里的 `--ks-pass pass:xxx` / `--key-pass pass:xxx` 打印成 `pass:<REDACTED>`，子进程输出同样过滤。原实现会把签名口令原样打到 stdout/CI 日志里，是一个真实的凭据泄漏点（本次构建因此触发内容安全拦截）。 |
+| 2026-11-15 | `scripts/verify_autolearn.py`（新增）、`scripts/push_apk.py` | 新增只读核查脚本：版本 / 无障碍绑定 / 自动学习开关 / 设备自装应用数 / 扫描与学习日志 / 唤醒目标 / fallback 计数；支持 `--auto-learn-on/off`、`--exclude`、`--allow-autostart`（可选冷启动 appops）、`--clear-log`、`--follow`。`push_apk.py` 的 `VERSION` 随 versionCode 同步到 `19`。 |

@@ -12,7 +12,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -24,6 +27,8 @@ import android.view.accessibility.AccessibilityEvent;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 
@@ -63,6 +68,27 @@ import java.util.List;
  * It only kills BACKGROUND processes and is skipped whenever myDV is the
  * intended/foreground app, so the verified myDV resume is unaffected.
  * Configurable via Settings.System "wb_quiet_mydv" (0/off disables).
+ *
+ * v4.2.1: tighten the learned set to `pm list packages -3` semantics
+ * (FLAG_SYSTEM == 0). v4.2 also counted FLAG_UPDATED_SYSTEM_APP and saw 29
+ * packages instead of 15, which could make an updated TCL system app a wake
+ * target. Static wb_boot_whitelist still covers any such app explicitly.
+ *
+ * v4.2: AUTO-LEARNING whitelist. v4.1 still needed a PC-side
+ * `boot_target.py --all-apps` after installing a new app: the static
+ * KNOWN_COMPONENTS table and the Settings.System snapshot could not see it.
+ * Now: (1) QUERY_ALL_PACKAGES (normal permission, no <queries> declaration,
+ * already proven acceptable by TCL's verifier in v3.9.1) lets PackageManager
+ * enumerate and resolve every self-installed app; (2) a full scan at service
+ * bind plus PACKAGE_ADDED/REMOVED incremental learning maintains a dynamic
+ * allow-set and caches each app's launcher component in SharedPreferences;
+ * (3) isAllowed() accepts any non-system package, so lastAllowedForeground(),
+ * recordStandbyClass() and resolveWakeTarget() automatically cover newly
+ * installed apps; (4) resolveBootIntent() tries leanback/launcher intent, an
+ * explicit MAIN+LAUNCHER query, the static table, the cached component, an
+ * exported MAIN Activity and finally an observed Activity class.
+ * The v4.0 task-reuse launch is UNCHANGED -- only the component source differs.
+ * Config: wb_auto_learn=0 disables learning; wb_learn_exclude=<csv> excludes.
  *
  * v4.1: fix "wake opens the WRONG app". The whitelist had 14 packages but
  * KNOWN_COMPONENTS mapped only 13 -- Hongguo TV (rocks.aston.hongguotv) was
@@ -124,6 +150,26 @@ public class ResumeService extends AccessibilityService {
     private static final String SP_LAST_CLASS_PKG = "last_class_pkg";
     private static final String SP_LAST_CLASS_AT = "last_class_at";
     private static final long STANDBY_MAX_AGE_MS = 604800000L; // 7 days
+
+    // ---- v4.2: auto-learning configuration -------------------------------
+    private static final String CFG_AUTO_LEARN = "wb_auto_learn";
+    private static final String CFG_LEARN_EXCLUDE = "wb_learn_exclude";
+    private static final String SP_LEARNED_APPS = "learned_apps";
+    private static final String SP_COMPONENT_PREFIX = "cmp.";
+    /** Never resume system UI, the installer, or the resume service itself. */
+    private static final String[] SKIP_PKGS = {
+            "com.wb.mydvresume",
+            "com.tcl.cyberui",
+            "com.tcl.MultiScreenInteraction_TV",
+            "com.tcl.appmarket2",
+            "com.tcl.guard",
+            "com.android.settings",
+            "com.android.systemui",
+            "com.android.packageinstaller",
+            "com.android.vending",
+            "android"
+    };
+
     private static final String DEFAULT_BOOT_TARGET = "com.github.mytv.dv";
     private static final String[] DEFAULT_WHITELIST = {
             "com.github.mytv.dv",
@@ -192,6 +238,15 @@ public class ResumeService extends AccessibilityService {
     private String lastApp = "";
     private boolean usageWarned = false;
 
+    // v4.2: runtime allow-set + cached component map (SharedPreferences).
+    private final HashSet<String> dynamicAllow = new HashSet<String>();
+    private boolean packageReceiverRegistered = false;
+    private long lastScanAt = 0L;
+    private HashSet<String> cachedStaticAllow = null;
+    private long cachedStaticAllowAt = 0L;
+    private String cachedExclude = null;
+    private long cachedExcludeAt = 0L;
+
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
@@ -206,6 +261,31 @@ public class ResumeService extends AccessibilityService {
                     || Intent.ACTION_USER_PRESENT.equals(a)) {
                 lastInteractive = true;
                 onWake("broadcast:" + a);
+            }
+        }
+    };
+
+    /** v4.2: incremental learning while the TV is running. Dynamically
+     *  registered, so Android 8+ implicit-broadcast restrictions do not apply. */
+    private final BroadcastReceiver packageReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            String a = i.getAction();
+            String pkg = (i.getData() != null)
+                    ? i.getData().getSchemeSpecificPart() : "";
+            if (pkg == null) {
+                pkg = "";
+            }
+            boolean replacing = i.getBooleanExtra(Intent.EXTRA_REPLACING, false);
+            if (Intent.ACTION_PACKAGE_ADDED.equals(a) && !replacing
+                    && pkg.length() > 0 && isUserAppCandidate(pkg)) {
+                learnPackage(pkg, "PACKAGE_ADDED");
+            } else if (Intent.ACTION_PACKAGE_REPLACED.equals(a)
+                    && pkg.length() > 0 && isUserAppCandidate(pkg)) {
+                learnPackage(pkg, "PACKAGE_REPLACED");
+            } else if (Intent.ACTION_PACKAGE_REMOVED.equals(a) && !replacing
+                    && pkg.length() > 0) {
+                forgetPackage(pkg);
             }
         }
     };
@@ -229,6 +309,19 @@ public class ResumeService extends AccessibilityService {
             registerReceiver(screenReceiver, f);
             receiverRegistered = true;
         }
+        if (!packageReceiverRegistered) {
+            IntentFilter pf = new IntentFilter();
+            pf.addAction(Intent.ACTION_PACKAGE_ADDED);
+            pf.addAction(Intent.ACTION_PACKAGE_REPLACED);
+            pf.addAction(Intent.ACTION_PACKAGE_REMOVED);
+            pf.addDataScheme("package");
+            registerReceiver(packageReceiver, pf);
+            packageReceiverRegistered = true;
+        }
+
+        // v4.2: full scan at every bind. Covers apps installed while the
+        // service was not bound (and repairs a missed PACKAGE_ADDED).
+        refreshInstalledApps("bind");
 
         SharedPreferences sp = getSharedPreferences("state", MODE_PRIVATE);
         long now = SystemClock.elapsedRealtime();
@@ -254,7 +347,8 @@ public class ResumeService extends AccessibilityService {
         lastInteractive = true;
         handler.postDelayed(pollRunnable, POLL_MS);
 
-        Log.i(TAG, "service connected v4.1 (standby-record wake target), prevBindGap="
+        Log.i(TAG, "service connected v4.2.1 (auto-learn), userApps="
+                + dynamicAllow.size() + ", prevBindGap="
                 + (prevBind > 0L ? (now - prevBind) : 0L)
                 + "ms, bootId=" + (curBoot.length() > 0 ? curBoot.substring(0, 8) : "n/a")
                 + ", coldBoot=" + coldBoot);
@@ -343,6 +437,9 @@ public class ResumeService extends AccessibilityService {
         }
         wokeAt = now;
         wakeLaunched = false;
+        if (dynamicAllow.isEmpty()) {
+            refreshInstalledApps("wake");
+        }
         wakeTarget = resolveWakeTarget();
         wakeClass = resolveWakeClass(wakeTarget);
         final int seq = ++wakeSeq;
@@ -516,6 +613,8 @@ public class ResumeService extends AccessibilityService {
 
     /** SCREEN_OFF: commit the exact screen so a fast suspend cannot lose it. */
     private void recordStandbyClass() {
+        // v4.2: last chance to notice a newly installed app before suspend.
+        refreshInstalledApps("standby");
         String[] pair = lastAllowedForegroundPair();
         if (pair[0].length() > 0 && pair[1].length() > 0) {
             SharedPreferences.Editor ed =
@@ -539,7 +638,6 @@ public class ResumeService extends AccessibilityService {
             if (um == null) {
                 return new String[]{"", ""};
             }
-            HashSet<String> allow = allowedSet();
             long now = System.currentTimeMillis();
             UsageEvents events = um.queryEvents(now - 86400000L, now);
             UsageEvents.Event e = new UsageEvents.Event();
@@ -549,7 +647,7 @@ public class ResumeService extends AccessibilityService {
                 events.getNextEvent(e);
                 if (e.getEventType() == UsageEvents.Event.MOVE_TO_FOREGROUND
                         && e.getPackageName() != null
-                        && allow.contains(e.getPackageName())) {
+                        && isAllowed(e.getPackageName())) {
                     lastPkg = e.getPackageName();
                     String c = e.getClassName();
                     lastCls = (c == null) ? "" : c;
@@ -716,7 +814,6 @@ public class ResumeService extends AccessibilityService {
             if (um == null) {
                 return "";
             }
-            HashSet<String> allow = allowedSet();
             long now = System.currentTimeMillis();
             UsageEvents events = um.queryEvents(now - 86400000L, now);
             UsageEvents.Event e = new UsageEvents.Event();
@@ -726,7 +823,7 @@ public class ResumeService extends AccessibilityService {
                 // MOVE_TO_FOREGROUND == ACTIVITY_RESUMED == 1 since API 29.
                 if (e.getEventType() == UsageEvents.Event.MOVE_TO_FOREGROUND
                         && e.getPackageName() != null
-                        && allow.contains(e.getPackageName())) {
+                        && isAllowed(e.getPackageName())) {
                     last = e.getPackageName();
                 }
             }
@@ -783,62 +880,123 @@ public class ResumeService extends AccessibilityService {
         }
     }
 
+    /**
+     * v4.2: resolve a LAUNCHABLE component for ANY self-installed app.
+     * Only the component is used; launch() rebuilds a clean v4.0 task-reuse
+     * Intent, so no launcher flags/categories can leak into the verified path.
+     */
     private Intent resolveBootIntent(String pkg) {
         if (pkg == null || pkg.length() == 0) {
             return null;
         }
+        ComponentName cn = resolveLaunchComponent(pkg);
+        if (cn == null) {
+            cn = exportedMainComponent(pkg);
+        }
+        if (cn == null && TARGET.equals(pkg)) {
+            cn = new ComponentName(TARGET, TARGET + ".MainActivity");
+        }
+        if (cn == null) {
+            cn = observedClassComponent(pkg);
+        }
+        if (cn == null) {
+            Log.w(TAG, "no launchable component for " + pkg);
+            return null;
+        }
+        Intent i = new Intent();
+        i.setComponent(cn);
+        return i;
+    }
+
+    /** Leanback / standard launcher intent -> explicit MAIN+LAUNCHER query
+     *  restricted to the package -> static table -> learned component cache. */
+    private ComponentName resolveLaunchComponent(String pkg) {
         PackageManager pm = getPackageManager();
-        Intent i = null;
         try {
-            i = pm.getLeanbackLaunchIntentForPackage(pkg);
+            Intent lean = pm.getLeanbackLaunchIntentForPackage(pkg);
+            if (lean != null && lean.getComponent() != null) {
+                return lean.getComponent();
+            }
         } catch (Throwable ignored) {
         }
-        if (i == null) {
-            try {
-                i = pm.getLaunchIntentForPackage(pkg);
-            } catch (Throwable ignored) {
+        try {
+            Intent l = pm.getLaunchIntentForPackage(pkg);
+            if (l != null && l.getComponent() != null) {
+                return l.getComponent();
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Intent q = new Intent(Intent.ACTION_MAIN);
+            q.addCategory(Intent.CATEGORY_LAUNCHER);
+            q.setPackage(pkg);
+            List<ResolveInfo> rs = pm.queryIntentActivities(q, 0);
+            if (rs != null && rs.size() > 0 && rs.get(0).activityInfo != null) {
+                return new ComponentName(pkg, rs.get(0).activityInfo.name);
+            }
+        } catch (Throwable ignored) {
+        }
+        for (int k = 0; k < KNOWN_COMPONENTS.length; k++) {
+            if (KNOWN_COMPONENTS[k][0].equals(pkg)) {
+                ComponentName flat = ComponentName.unflattenFromString(
+                        KNOWN_COMPONENTS[k][1]);
+                if (flat != null) {
+                    return flat;
+                }
             }
         }
-        if (i == null && TARGET.equals(pkg)) {
-            i = new Intent();
-            i.setComponent(new ComponentName(TARGET, TARGET + ".MainActivity"));
+        return cachedComponent(pkg);
+    }
+
+    /** Launcher component cached by the full scan / PACKAGE_ADDED. */
+    private ComponentName cachedComponent(String pkg) {
+        String flat = getSharedPreferences("state", MODE_PRIVATE)
+                .getString(SP_COMPONENT_PREFIX + pkg, "");
+        if (flat.length() == 0) {
+            return null;
         }
-        if (i == null) {
-            // Android 11 package-visibility fallback: explicit component.
-            for (int k = 0; k < KNOWN_COMPONENTS.length; k++) {
-                if (KNOWN_COMPONENTS[k][0].equals(pkg)) {
-                    ComponentName cn = ComponentName.unflattenFromString(
-                            KNOWN_COMPONENTS[k][1]);
-                    if (cn != null) {
-                        i = new Intent();
-                        i.setComponent(cn);
+        return ComponentName.unflattenFromString(flat);
+    }
+
+    /** Last-but-one resort: any exported ACTION_MAIN Activity of that package. */
+    private ComponentName exportedMainComponent(String pkg) {
+        try {
+            Intent q = new Intent(Intent.ACTION_MAIN);
+            q.setPackage(pkg);
+            List<ResolveInfo> rs = getPackageManager().queryIntentActivities(q, 0);
+            if (rs != null) {
+                for (int k = 0; k < rs.size(); k++) {
+                    ResolveInfo r = rs.get(k);
+                    if (r != null && r.activityInfo != null
+                            && r.activityInfo.exported
+                            && r.activityInfo.name != null) {
+                        return new ComponentName(pkg, r.activityInfo.name);
                     }
-                    break;
                 }
             }
+        } catch (Throwable ignored) {
         }
-        if (i == null) {
-            // v4.1: generic fallback for whitelisted apps installed AFTER the
-            // static table was built. UsageEvents (and the SCREEN_OFF record)
-            // give us the real Activity class even when PackageManager cannot
-            // resolve a launcher intent for another package.
-            String[] pair = lastAllowedForegroundPair();
-            String cls = "";
-            if (pair[0].equals(pkg) && pair[1].length() > 0) {
-                cls = pair[1];
-            } else {
-                SharedPreferences sp = getSharedPreferences("state", MODE_PRIVATE);
-                if (sp.getString(SP_LAST_CLASS_PKG, "").equals(pkg)) {
-                    cls = sp.getString(SP_LAST_CLASS, "");
-                }
-            }
-            if (cls.length() > 0) {
-                i = new Intent();
-                i.setComponent(new ComponentName(pkg, cls));
-                Log.i(TAG, "resolved " + pkg + " from observed class=" + cls);
+        return null;
+    }
+
+    /** v4.1 fallback kept for apps whose launcher intent cannot be resolved:
+     *  use the real Activity class seen in UsageEvents / the standby record. */
+    private ComponentName observedClassComponent(String pkg) {
+        String cls = "";
+        String[] pair = lastAllowedForegroundPair();
+        if (pair[0].equals(pkg) && pair[1].length() > 0) {
+            cls = pair[1];
+        } else {
+            SharedPreferences sp = getSharedPreferences("state", MODE_PRIVATE);
+            if (sp.getString(SP_LAST_CLASS_PKG, "").equals(pkg)) {
+                cls = sp.getString(SP_LAST_CLASS, "");
             }
         }
-        return i;
+        if (cls.length() == 0) {
+            return null;
+        }
+        Log.i(TAG, "resolved " + pkg + " from observed class=" + cls);
+        return new ComponentName(pkg, cls);
     }
 
     /**
@@ -913,23 +1071,213 @@ public class ResumeService extends AccessibilityService {
         }
     }
 
+    /** Static snapshot from Settings.System (or the built-in list). Cached
+     *  briefly: isAllowed() runs for every UsageEvents row. */
     private HashSet<String> allowedSet() {
+        long now = SystemClock.elapsedRealtime();
+        if (cachedStaticAllow != null && now - cachedStaticAllowAt < 60000L) {
+            return cachedStaticAllow;
+        }
         HashSet<String> set = new HashSet<String>();
         String cfg = getCfg(CFG_WHITELIST);
         if (cfg != null && cfg.trim().length() > 0) {
             for (String s : cfg.split(",")) {
-                set.add(s.trim());
+                if (s.trim().length() > 0) {
+                    set.add(s.trim());
+                }
             }
         } else {
             for (int k = 0; k < DEFAULT_WHITELIST.length; k++) {
                 set.add(DEFAULT_WHITELIST[k]);
             }
         }
+        String ex = excludedCsv();
+        if (ex.length() > 0) {
+            for (String s : ex.split(",")) {
+                if (s.trim().length() > 0) {
+                    set.remove(s.trim());
+                }
+            }
+        }
+        cachedStaticAllow = set;
+        cachedStaticAllowAt = now;
         return set;
     }
 
+    /**
+     * v4.2: static whitelist UNION every self-installed app discovered at
+     * runtime. A newly installed app is remembered/resumed with no PC and no
+     * edit of wb_boot_whitelist.
+     */
     private boolean isAllowed(String pkg) {
-        return pkg != null && pkg.length() > 0 && allowedSet().contains(pkg);
+        if (pkg == null || pkg.length() == 0 || isSkipped(pkg)) {
+            return false;
+        }
+        if (allowedSet().contains(pkg) || dynamicAllow.contains(pkg)) {
+            return true;
+        }
+        // Only used before the first successful scan; afterwards the scan
+        // (bind / SCREEN_OFF / package broadcasts) owns the dynamic set.
+        return autoLearnEnabled() && dynamicAllow.isEmpty()
+                && isUserAppCandidate(pkg);
+    }
+
+    private boolean autoLearnEnabled() {
+        String cfg = getCfg(CFG_AUTO_LEARN);
+        return cfg == null || !("0".equals(cfg.trim())
+                || "off".equalsIgnoreCase(cfg.trim()));
+    }
+
+    private String excludedCsv() {
+        long now = SystemClock.elapsedRealtime();
+        if (cachedExclude == null || now - cachedExcludeAt > 60000L) {
+            String s = getCfg(CFG_LEARN_EXCLUDE);
+            cachedExclude = (s == null) ? "" : s.trim();
+            cachedExcludeAt = now;
+        }
+        return cachedExclude;
+    }
+
+    private boolean isSkipped(String pkg) {
+        for (int k = 0; k < SKIP_PKGS.length; k++) {
+            if (SKIP_PKGS[k].equals(pkg)) {
+                return true;
+            }
+        }
+        String ex = excludedCsv();
+        if (ex.length() > 0) {
+            for (String s : ex.split(",")) {
+                if (s.trim().equals(pkg)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** True for REAL third-party packages (matches `pm list packages -3`).
+     *  v4.2.1: do NOT count FLAG_UPDATED_SYSTEM_APP -- TCL ships ~13 updated
+     *  system apps whose exported MAIN Activities would otherwise become wake
+     *  targets and could pull up a system screen instead of the user's app. */
+    private boolean isUserAppCandidate(String pkg) {
+        if (pkg == null || pkg.length() == 0 || isSkipped(pkg)) {
+            return false;
+        }
+        try {
+            ApplicationInfo ai = getPackageManager().getApplicationInfo(pkg, 0);
+            return ai != null && (ai.flags & ApplicationInfo.FLAG_SYSTEM) == 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * Full scan: rebuild the dynamic allow-set and cache launcher components.
+     * Cheap after the first pass (only packages without a cached component are
+     * resolved); run at bind, at SCREEN_OFF and on package changes.
+     */
+    private void refreshInstalledApps(String reason) {
+        lastScanAt = SystemClock.elapsedRealtime();
+        if (!autoLearnEnabled()) {
+            dynamicAllow.clear();
+            return;
+        }
+        HashSet<String> found = new HashSet<String>();
+        ArrayList<String> fresh = new ArrayList<String>();
+        SharedPreferences sp = getSharedPreferences("state", MODE_PRIVATE);
+        SharedPreferences.Editor ed = sp.edit();
+        try {
+            List<PackageInfo> all = getPackageManager().getInstalledPackages(0);
+            if (all != null) {
+                for (int k = 0; k < all.size(); k++) {
+                    PackageInfo pi = all.get(k);
+                    if (pi == null || pi.packageName == null
+                            || isSkipped(pi.packageName)) {
+                        continue;
+                    }
+                    ApplicationInfo ai = pi.applicationInfo;
+                    if (ai == null
+                            || (ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+                        continue;
+                    }
+                    String pkg = pi.packageName;
+                    found.add(pkg);
+                    if (sp.getString(SP_COMPONENT_PREFIX + pkg, "").length() == 0) {
+                        ComponentName cn = resolveLaunchComponent(pkg);
+                        if (cn != null) {
+                            ed.putString(SP_COMPONENT_PREFIX + pkg,
+                                    cn.flattenToString());
+                            fresh.add(pkg);
+                        }
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "auto-learn scan failed: " + t);
+        }
+        if (found.size() > 0) {
+            ed.putString(SP_LEARNED_APPS, joinSet(found));
+        }
+        ed.commit();
+        dynamicAllow.clear();
+        dynamicAllow.addAll(found);
+        Collections.sort(fresh);
+        Log.i(TAG, "auto-learn scan (" + reason + "): " + found.size()
+                + " user apps, " + fresh.size() + " new components"
+                + (fresh.size() > 0 ? " " + fresh.toString() : ""));
+    }
+
+    /** Incremental learning from PACKAGE_ADDED / PACKAGE_REPLACED. */
+    private void learnPackage(String pkg, String reason) {
+        SharedPreferences sp = getSharedPreferences("state", MODE_PRIVATE);
+        ComponentName cn = resolveLaunchComponent(pkg);
+        HashSet<String> set = learnedSet(sp);
+        set.add(pkg);
+        SharedPreferences.Editor ed = sp.edit();
+        ed.putString(SP_LEARNED_APPS, joinSet(set));
+        if (cn != null) {
+            ed.putString(SP_COMPONENT_PREFIX + pkg, cn.flattenToString());
+        }
+        ed.commit();
+        dynamicAllow.add(pkg);
+        Log.i(TAG, "auto-learn " + reason + ": " + pkg + " component="
+                + (cn == null ? "unresolved" : cn.flattenToShortString()));
+    }
+
+    private void forgetPackage(String pkg) {
+        SharedPreferences sp = getSharedPreferences("state", MODE_PRIVATE);
+        HashSet<String> set = learnedSet(sp);
+        set.remove(pkg);
+        sp.edit().putString(SP_LEARNED_APPS, joinSet(set))
+                .remove(SP_COMPONENT_PREFIX + pkg).commit();
+        dynamicAllow.remove(pkg);
+        Log.i(TAG, "auto-learn PACKAGE_REMOVED: " + pkg);
+    }
+
+    private HashSet<String> learnedSet(SharedPreferences sp) {
+        HashSet<String> set = new HashSet<String>();
+        String raw = sp.getString(SP_LEARNED_APPS, "");
+        if (raw.length() > 0) {
+            for (String s : raw.split(",")) {
+                if (s.trim().length() > 0) {
+                    set.add(s.trim());
+                }
+            }
+        }
+        return set;
+    }
+
+    private String joinSet(HashSet<String> set) {
+        ArrayList<String> parts = new ArrayList<String>(set);
+        Collections.sort(parts);
+        StringBuilder b = new StringBuilder();
+        for (int k = 0; k < parts.size(); k++) {
+            if (k > 0) {
+                b.append(",");
+            }
+            b.append(parts.get(k));
+        }
+        return b.toString();
     }
 
     private String getCfg(String key) {
@@ -972,6 +1320,13 @@ public class ResumeService extends AccessibilityService {
             } catch (Throwable ignored) {
             }
             receiverRegistered = false;
+        }
+        if (packageReceiverRegistered) {
+            try {
+                unregisterReceiver(packageReceiver);
+            } catch (Throwable ignored) {
+            }
+            packageReceiverRegistered = false;
         }
         return super.onUnbind(intent);
     }

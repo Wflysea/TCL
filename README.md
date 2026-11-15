@@ -3,8 +3,9 @@
 围绕一台 TCL 电视做的完整工程记录：一个**纯电视端、脱离电脑**运行的无障碍服务（待机唤醒后回到原播放界面），以及精简、备份、还原、厂家远控审计、后台加固、诊断与推送的全部脚本。
 
 - 仓库：<https://github.com/Wflysea/TCL>
-- 当前版本：**v4.1** / `versionCode 17` / `versionName 3.1`
+- 当前版本：**v4.2.1** / `versionCode 19` / `versionName 3.3`
 - **状态：✅ 2026-11-14 用户用真实遥控器完成「暂停 → 待机 → 唤醒」测试，成功回到暂停前界面并接着播放**（[实测记录](CHANGELOG.md)）
+- **v4.2 / v4.2.1（2026-11-15）自动学习版**：以后电视**新装应用不用连电脑、不用改白名单**——服务自己扫描自装应用、监听 `PACKAGE_ADDED`、缓存启动组件；待机唤醒自动回到新应用原来的界面。v4.1 的「待机记录优先选目标」继续保留。
 - **v4.1（2026-11-15）**：修复「唤醒拉错应用」——待机前在红果TV，唤醒却固定拉 myDV。根因是静态组件表缺少 `rocks.aston.hongguotv` 的映射；已补齐并改为按 SCREEN_OFF 待机记录选目标。
 - 版本演进见 [CHANGELOG.md](CHANGELOG.md)
 
@@ -36,7 +37,7 @@
 - **唤醒恢复**：监听 `SCREEN_ON` / `USER_PRESENT`，加 2 秒轮询 `isInteractive()` 和长间隔 `elapsedRealtime`、服务重绑定三重检测；唤醒后在 `0.8 / 2.5 / 5 / 9 / 13 秒` 共 5 个纠正点，把待机前的应用**整个任务栈**原样带回前台（对抗 TCL 亮屏后 2~3 秒才把桌面抢到前台的行为）。
 - **冷启动进记忆应用**（C 折中）：靠 `boot_id` / `elapsedRealtime` 负间隔判冷启动，`UsageStatsManager` 事件流 + 本地 `last_app` 兜底；默认 myDV，白名单内记忆上次应用，否则回退；120 秒纠正窗口，用户按键或主动开别的应用即取消劫持。
 - **myDV 后台音频静音**：目标不是 myDV 时用 `killBackgroundProcesses` 清掉 myDV 后台音频，避免唤醒别的应用时叠一层声音。
-- **白名单**：全部自装应用（14 个）纳入 `wb_boot_whitelist`，并放行 `APP_AUTO_START` / `APP_ASSOC_START` 自启动。
+- **自动学习白名单**（v4.2）：服务绑定时全量扫描 `pm list packages -3` 意义下的自装应用，`PACKAGE_ADDED / REPLACED / REMOVED` 增量学习，并把每个应用的 launcher 组件缓存进 SharedPreferences；`isAllowed()` = 静态 `wb_boot_whitelist` ∪ 运行时自装集合。**装完新应用直接待机唤醒即可，不必再跑 `boot_target.py --all-apps`**。系统应用、桌面、安装器、服务自身永不入集；`wb_auto_learn=0` 可退回静态白名单，`wb_learn_exclude` 可排除指定包。
 - **精确恢复**：v4.0 已移除该分支（播放页不导出，第三方无法启动；改由任务栈复用解决）。
 
 关键配置（`settings put system ...`）：
@@ -47,6 +48,8 @@
 | `wb_boot_whitelist` | 允许记忆的自装应用白名单（逗号分隔） |
 | `wb_quiet_mydv` | 非 myDV 目标时静音 myDV 后台音频（1=开） |
 | `wb_exact_resume` | 精确恢复开关（v4.0 起不再使用该分支，保留兼容） |
+| `wb_auto_learn` | 自动学习开关（默认开；`0` / `off` 退回静态白名单） |
+| `wb_learn_exclude` | 永不恢复的包名，逗号分隔（即使它是自装应用） |
 
 更细的原理见 [docs/architecture.md](docs/architecture.md)。
 
@@ -57,7 +60,7 @@
 ```
 TCL/
 ├── README.md                  本文件
-├── CHANGELOG.md               v1 → v4.1 完整版本演进
+├── CHANGELOG.md               v1 → v4.2.1 完整版本演进
 ├── .gitignore                 排除私钥 / 令牌 / 大二进制
 ├── apk/                       当前版本完整源码
 │   ├── AndroidManifest.xml
@@ -66,7 +69,7 @@ TCL/
 │   ├── build_apk.py           构建 + 签名脚本（口令已脱敏）
 │   └── README.md              构建说明与密钥说明
 ├── releases/                  每个 versionCode 一份已签名 APK
-├── history/                   各版本源码快照（v1 / v3.6 / v3.9.1 / v3.10）
+├── history/                   各版本源码快照（v1 / v3.6 / v3.9.1 / v3.10 / v4.0 / v4.1）
 ├── scripts/                   全部运维与诊断脚本
 │   └── sync_and_push.py       ★ 改完即同步 + commit + push
 ├── device-backup/             精简前的设备状态快照（已脱敏）
@@ -96,6 +99,7 @@ python finalize_resume.py
 python boot_target.py --status
 python boot_target.py --wake-report
 python verify_quiet.py --report
+python verify_autolearn.py --follow    # v4.2：自动学习集合 / 唤醒目标核查
 ```
 
 ---
@@ -143,4 +147,5 @@ python scripts/sync_and_push.py
 - TCL 对第三方服务的**隐式** `MAIN/LAUNCHER` intent 拒绝解析（连 `adb shell` 都报 unable to resolve），所以必须用**显式组件**。
 - 回桌面后 TCL 会杀第三方播放器并清任务栈；一旦栈被清掉，任何启动都只能进首页。
 - 电脑侧守护进程与计划任务**保持停用**，全部逻辑都在电视端。
+- **自动学习的边界**：服务能自动识别并恢复新装应用的「待机 → 唤醒」路径；但 TCL 的 `APP_AUTO_START` / `APP_ASSOC_START` appops 只能由 adb 设置，普通第三方应用无法给别的应用授权。所以**断电冷开机**后想自动进某个新装应用，可选跑一次 `python verify_autolearn.py --allow-autostart`（一次性、非必需）。
 - 精确恢复、launcher 隐式 intent、全局返回键弹栈、广播拉起等替代方案的实测结论见 [docs/troubleshooting.md](docs/troubleshooting.md)。

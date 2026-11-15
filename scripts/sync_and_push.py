@@ -7,7 +7,7 @@ This is the "push on every change" entry point. Run it after ANY edit to the
 source, the ops scripts or the docs:
 
     python scripts/sync_and_push.py
-    python scripts/sync_and_push.py --message "v4.1 fix wake timing"
+    python scripts/sync_and_push.py --message "v4.2 auto-learning whitelist"
     python scripts/sync_and_push.py --no-push      # sync + commit only
     python scripts/sync_and_push.py --dry-run      # report, change nothing
 
@@ -135,6 +135,8 @@ def main():
         "v391_AndroidManifest.xml": "history/v3.9.1/AndroidManifest.xml",
         "v40_ResumeService.java": "history/v4.0/ResumeService.java",
         "v40_AndroidManifest.xml": "history/v4.0/AndroidManifest.xml",
+        "v41_ResumeService.java": "history/v4.1/ResumeService.java",
+        "v41_AndroidManifest.xml": "history/v4.1/AndroidManifest.xml",
     }
     for name, dst in sorted(history.items()):
         changed += copy_file(os.path.join(APK_SRC, name), rel(dst),

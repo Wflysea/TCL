@@ -102,6 +102,33 @@ cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.in
 不要往「任务栈 / SINGLE_TOP / 播放页不导出」方向排查——那是 v4.0 已解决的另一类症状（进应用首页、有声音没画面）。
 
 
+## 症状：电视装了新应用，待机唤醒却回不到它（v4.2 已修）
+
+**现象**：v4.1 及以前，`wb_boot_whitelist` 是 `boot_target.py --all-apps` 生成的一次性静态快照，`KNOWN_COMPONENTS` 是手工静态表。新装应用既不在白名单、也没有组件映射；Android 11 包可见性又让 `getLaunchIntentForPackage()` 返回 null → `resolveBootIntent()` 返回 null → `resolveWakeTarget()` 静默回退默认 myDV。以前只能连电脑重跑 `--all-apps`，甚至改源码补组件表。
+
+**v4.2 的解法**（自动学习，详见 [CHANGELOG.md 的 v4.2 章节](../CHANGELOG.md) 与 [architecture.md 第 10 节](architecture.md)）：
+
+1. 清单加 `QUERY_ALL_PACKAGES` 打开包可见性（普通权限，v3.9.1 已验证验证器接受；不是 `<queries>`）；
+2. 绑定时全量扫描自装应用 + `PACKAGE_ADDED/REPLACED/REMOVED` 增量学习 + `SCREEN_OFF` 兜底重扫；
+3. 把每个应用的 launcher 组件缓存进 SharedPreferences，`resolveBootIntent()` 六级解析；
+4. `isAllowed()` = 静态白名单 ∪ 运行时自装集合，待机记录与唤醒目标自动覆盖新应用；
+5. v4.2.1 收紧到 `FLAG_SYSTEM == 0`，避免把 TCL 的 OTA 更新系统应用误当自装应用拉起系统界面。
+
+**若新应用仍不被恢复，按顺序查**：
+
+```bash
+python verify_autolearn.py --follow          # 版本 / 绑定 / userApps / PACKAGE_ADDED / fallback
+adb shell "settings get system wb_auto_learn"      # 是否被关成 0
+adb shell "settings get system wb_learn_exclude"   # 是否被排除
+adb shell "pm list packages -3"                    # 与日志里的 userApps 对照
+cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER <包名>
+```
+
+- `auto-learn scan` 的数量应等于 `pm -3` 减掉服务自身；偏少就查 `SKIP_PKGS` / `wb_learn_exclude`；
+- 纯服务型（无 launcher Activity）应用本来就没有界面可恢复；
+- 出现 `no launchable component` 说明六级解析全失败，可把包名写进 `wb_boot_whitelist`（静态表路径仍兼容）；
+- **冷开机**场景 TCL 还可能要求 `APP_AUTO_START` appops，可选跑一次 `python verify_autolearn.py --allow-autostart` —— 第三方应用无法自行设置该 appops，这是唯一的电脑侧边界。
+
 ## 症状：安装完成瞬间闪出「下载失败」，但应用其实装好了（2026-11-15 已修）
 
 **这是推送脚本的收尾造成的假提示，不是安装失败。** 现象：按完「同意」后安装成功，画面上却一闪而过一个「下载失败」提示；核查 `dumpsys package com.wb.mydvresume | grep versionCode` 与设备内 `base.apk` 哈希，新版本已正确装好。

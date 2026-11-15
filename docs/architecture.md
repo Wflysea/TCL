@@ -1,7 +1,7 @@
 # 服务原理
 
 > 面向想改代码的人。完整实现见 [`apk/src/com/wb/mydvresume/ResumeService.java`](../apk/src/com/wb/mydvresume/ResumeService.java)。
-> 当前版本 v4.1（`versionCode 17 / 3.1`）。
+> 当前版本 v4.2.1（`versionCode 19 / 3.3`，自动学习白名单）。
 
 ## 1. 整体架构
 
@@ -59,7 +59,7 @@ startActivity(bring);
 
 - 用 `boot_id` 变化 / `elapsedRealtime` 负间隔判断是冷启动而非唤醒。
 - `UsageStatsManager` 的 `ACTIVITY_RESUMED` 与 `class=` 事件流判断关机/待机前最后用的应用，辅以本地 `last_app` 兜底。
-- 默认回 myDV；只有在 `wb_boot_whitelist` 白名单内才记忆上次应用，否则回退默认。
+- 默认回 myDV；v4.2 起「允许记忆」= 静态 `wb_boot_whitelist` ∪ **运行时自动学习的自装应用集合**，新装应用无需任何电脑侧配置（见第 10 节）。
 - 120 秒纠正窗口；用户按键或主动打开别的应用即取消劫持，避免抢操作。
 - 冷启动 `launchBoot()` 仍用显式组件启动，v4.0 未改动这部分。
 
@@ -90,7 +90,8 @@ ActivityManager.killBackgroundProcesses("com.github.mytv.dv");
 ```bash
 python boot_target.py --status            # 配置与目标
 python boot_target.py --list-apps         # 自装应用
-python boot_target.py --all-apps          # 重扫白名单
+python boot_target.py --all-apps          # 重扫静态白名单（v4.2 起通常不再需要）
+python verify_autolearn.py --follow       # 自动学习集合 / 唤醒目标 / fallback 核查
 python boot_target.py --wake-report       # 唤醒 / 待机时序与 class
 python boot_target.py --boot-report       # 冷启动判定
 python boot_target.py --exact-off         # 关闭精确恢复分支
@@ -111,3 +112,40 @@ v4.1 的目标解析顺序：
 4. `resolveBootIntent()`：PackageManager → `KNOWN_COMPONENTS` → **新增**从 UsageEvents / 待机记录取真实 Activity 类构造显式 `ComponentName`。
 
 `launch()` 的任务栈复用写法（显式组件 + MAIN/LAUNCHER + `RESET_TASK_IF_NEEDED`、无 `SINGLE_TOP`）、5 次纠正、`quietMyDv()` 与冷启动逻辑均未改动。
+
+## 10. v4.2：自动学习白名单
+
+**为什么需要**：v4.1 的 `wb_boot_whitelist` 是 `boot_target.py --all-apps` 生成的一次性快照，`KNOWN_COMPONENTS` 是手工静态表。每装一个新应用都要连电脑重扫，否则 `resolveBootIntent()` 拿不到组件、唤醒静默回退 myDV。
+
+**运行时数据流**：
+
+```
+onServiceConnected() ──> refreshInstalledApps("bind")  全量扫描 pm -3 语义的自装应用
+PACKAGE_ADDED/REPLACED ─> learnPackage()   增量加入 + 缓存 launcher 组件
+PACKAGE_REMOVED ────────> forgetPackage()  移除
+SCREEN_OFF ─────────────> refreshInstalledApps("standby")  待机前最后兜底
+        │
+        ▼
+dynamicAllow (HashSet) + SharedPreferences: learned_apps / cmp.<pkg>
+        │
+        ▼
+isAllowed() = 静态白名单 ∪ dynamicAllow
+        │
+        ├─> lastAllowedForeground()      最近前台应用（UsageEvents）
+        ├─> recordStandbyClass()        SCREEN_OFF 待机记录
+        ├─> resolveWakeTarget()         唤醒目标
+        └─> resolveBootIntent()         六级组件解析
+                    │
+                    ▼
+        launch() 的 v4.0 任务栈复用（未改动）
+```
+
+**可见性前提**：`QUERY_ALL_PACKAGES`（普通安装时权限，无 `<queries>`，v3.9.1 已验证 TCL 验证器接受）。没有它，Android 11 下 `getInstalledPackages()` / `getLaunchIntentForPackage()` 对别的包会被过滤，自动学习无从谈起。
+
+**六级组件解析**：leanback launcher intent → 标准 launcher intent → 限定包名的显式 `MAIN+LAUNCHER` 查询 → `KNOWN_COMPONENTS` 静态表 → 缓存的已学组件 → exported MAIN Activity / UsageEvents 观察类。只取 `ComponentName`，`launch()` 再重建干净的 Intent，所以解析方式不会影响已实测的任务栈行为。
+
+**边界收紧（v4.2.1）**：只认 `ApplicationInfo.FLAG_SYSTEM == 0` 的真第三方包。v4.2 初版把 `FLAG_UPDATED_SYSTEM_APP` 也算进去，扫描到 29 个（TCL 有 ~13 个被 OTA 更新的系统应用），这些包带 exported MAIN Activity，理论上可能被拉成唤醒目标；收紧后 `userApps=15`，与 `pm list packages -3` 一致。
+
+**配置**：`wb_auto_learn=0` 关闭动态学习（退回 v4.1 静态行为）；`wb_learn_exclude=<csv>` 排除指定包。`SKIP_PKGS` 硬编码排除桌面、安装器、系统 UI、服务自身。
+
+**不能自动的部分**：TCL 的 `APP_AUTO_START` / `APP_ASSOC_START` appops 需要 shell 权限，第三方应用无法给别的应用授权。「待机 → 唤醒」主路径完全脱离电脑；**断电冷开机**自动进新装应用可选跑一次 `verify_autolearn.py --allow-autostart`。完整原理与实测日志见 [CHANGELOG.md 的 v4.2 章节](../CHANGELOG.md)。

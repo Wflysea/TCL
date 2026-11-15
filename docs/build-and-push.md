@@ -47,19 +47,22 @@ sha256sum MyDvResume.apk                                     # 记录指纹
 
 ```bash
 cd E:\WorkBuddy\闲聊\_tmp\tcl75v8l_backup
-python push_apk.py              # 推送（控制台横幅 + 电视弹窗都显示版本）
+python push_apk.py              # 推送（版本显示在 PC 控制台，见下方结论）
 python push_apk.py --info-only   # 只查本地 APK 和电视已装版本，不推送
 ```
 
-**版本显示（2026-11-15 修复「推送时看不到版本号」）**：tcast 的 `INSTALL` 帧虽然带 `versionCode` 字段，但 TCL 确认弹窗**不渲染该字段**，只显示 label。因此脚本在三处同时显示版本：
+**版本显示（2026-11-15 21:12 真机取证后的最终结论）**：`push_apk.py` 从签名 APK 自动读取版本，**只有 PC 控制台这一处真正可见**。
 
-| 位置 | 示例 |
-| --- | --- |
-| 推送前控制台横幅 | `PUSHING myDV Resume v4.2.1` / `versionCode: 19` / `versionName: 3.3` / sha256 / 电视已装版本 |
-| 电视端确认弹窗标签 | `myDV Resume 3.3 / vc19 (v4.2.1)` |
-| 电视下载文件名 | `MyDvResume-v3.3-vc19.apk`（APK 的字节副本，进程退出自动删除） |
+| 位置 | 示例 | 电视上可见？ |
+| --- | --- | --- |
+| 推送前控制台横幅 | `PUSHING myDV Resume v4.2.1` / `versionCode: 19` / `versionName: 3.3` / sha256 / 电视已装版本 | ✅（PC） |
+| 安装后 `=== VERSION CHECK ===` | `before 19/3.3 → after 19/3.3` | ✅（PC） |
+| tcast `INSTALL` 帧的 label | `myDV Resume 3.3 / vc19 (v4.2.1)` | ❌ |
+| 下载文件名 | `MyDvResume-v3.3-vc19.apk` | ❌ |
 
-安装成功后还会打印 `=== VERSION CHECK ===` 的 before → after 对比。想让弹窗恢复原始应用名，用 `--plain-label`。
+**为什么电视弹窗看不到应用名和版本**：`com.tcl.MultiScreenInteraction_TV` 的确认框是**固定布局 + 固定文案**。UI dump 里只有 `iv_icon`、`tv_title`（「多屏互动」）、`tv_content`（「1 正在发起应用推送，同意后将接收应用并进行安装」）、`btn_negative`（拒绝）、`btn_positive`（同意）——**没有任何应用名 / 版本控件**。实测把 `sizeMB` 字段换成任意文本，`tv_content` 都不变，证明协议字段进不了文案；`cmd notification post` 发的通知 importance 仅 3（DEFAULT），`statusbar expand-notifications` 在电视上也不渲染。**改 label、改文件名、改协议字段、发系统通知都无效，不要再试。**
+
+若确实要在电视上看到，只能另加一层可见 UI（例如无障碍服务的 `TYPE_ACCESSIBILITY_OVERLAY` 横幅，推送脚本用 adb 广播触发），代价是升一版 APK 并在电视上重新确认安装。`--plain-label` 可让 tcast 帧恢复原始应用名（只影响协议记录，不影响画面）。
 
 - 走 **6553 tcast / `com.tcl.MultiScreenInteraction_TV`** 多屏互动，不是 `adb install`。
 - **电视端会弹安装确认：按「右」选中「同意」再按确认。**

@@ -133,6 +133,8 @@ def main():
         "v310_AndroidManifest.xml": "history/v3.10/AndroidManifest.xml",
         "v391_ResumeService.java": "history/v3.9.1/ResumeService.java",
         "v391_AndroidManifest.xml": "history/v3.9.1/AndroidManifest.xml",
+        "v40_ResumeService.java": "history/v4.0/ResumeService.java",
+        "v40_AndroidManifest.xml": "history/v4.0/AndroidManifest.xml",
     }
     for name, dst in sorted(history.items()):
         changed += copy_file(os.path.join(APK_SRC, name), rel(dst),

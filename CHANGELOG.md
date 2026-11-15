@@ -2,7 +2,7 @@
 
 所有版本均通过 6553 tcast / `com.tcl.MultiScreenInteraction_TV` 多屏互动推送安装（普通 `adb install` 会被 TCL 签名门拦截）。每次覆盖安装后都要重跑 `finalize_resume.py` 重绑无障碍服务。
 
-版本代号（v3.x / v4.0）是对话里用的名字，`versionCode` / `versionName` 是 APK 清单里的真实值。
+版本代号（v3.x / v4.x）是对话里用的名字，`versionCode` / `versionName` 是 APK 清单里的真实值。
 
 | 版本 | versionCode / Name | 时间 | 主要内容 | 结果 |
 | --- | --- | --- | --- | --- |
@@ -17,6 +17,7 @@
 | v3.9.1 | 14 / 2.3 | 11-14 18:44 | 清单加 `QUERY_ALL_PACKAGES`（normal 权限，无 `<queries>` 声明）解决 Android 11 包可见性 | 验证器接受、可见性生效（`component unavailable` → `not exported`），但隐式 launcher intent **仍解析失败**；实测连 `adb shell` 都报 unable to resolve ⇒ TCL 系统级限制 |
 | **v3.10** | **15 / 2.4** | 11-14 18:58 | 用户要求「参考 3.6」：从历史记录里提取 v3.6 的 887 行完整源码原样覆盖，清单也回退（移除 `QUERY_ALL_PACKAGES`），只改注释与日志标记 | 逻辑 100% 复原、5 次纠正节奏恢复，**但实测仍落在首页** ⇒ 证明问题不在服务代码改动，而在「同一份代码遇到不同的待机页面状态」 |
 | **v4.0** | **16 / 3.0** | 11-14 19:38 | **找到真因并修复**：显式组件 + `ACTION_MAIN` + `CATEGORY_LAUNCHER` + `NEW_TASK\|RESET_TASK_IF_NEEDED\|NO_ANIMATION`（**去掉 `SINGLE_TOP`**），把整个任务栈原样带回前台而不新建首页；删除每次必抛异常的精确恢复分支；恢复 5 次纠正并取消 v3.8 的跳过判断；新增 legacy fallback | 重绑实测 10 次 `task reuse`、`fallback=0`、`SecurityException=0`；`mCurrentFocus` 保持在 `DetailActivity`，栈 = Home → History → Detail，**无多余首页**；**11-14 20:09 用户真实遥控器「暂停 → 待机 → 唤醒」实测通过 ✅**（见下节） |
+| **v4.1** | **17 / 3.1** | 11-15 19:22 | 修复「唤醒拉错应用」：静态组件表补 `rocks.aston.hongguotv/.MainActivity`；`resolveWakeTarget()` 优先采用 SCREEN_OFF 持久化的待机包名（带 7 天新鲜度校验）；`resolveBootIntent()` 增加从 UsageEvents / 待机记录取真实 Activity 类的通用兜底 | 重绑实测两段唤醒共 **10 次 `launched rocks.aston.hongguotv`**、`mydv_launched=0`、`legacy fallback=0`；目标与待机前一致，设备哈希与本地一致 `bf40c492…1c5` |
 
 ---
 
@@ -45,6 +46,20 @@
 
 结论：显式组件 + `RESET_TASK_IF_NEEDED` + 去掉 `SINGLE_TOP` 的方案在真实待机唤醒场景成立；5 次纠正、静音、白名单、冷启动逻辑保持原样。**项目功能闭环。**
 
+## v4.1 的根因：唤醒打开错的应用
+
+**症状**：2026-11-15 18:51 真实待机唤醒后，服务连续 5 次把 `com.github.mytv.dv`（myDV 默认目标）拉到前台，而待机前、以及用户随后切回的都是红果TV `rocks.aston.hongguotv`。日志里 `WAKE class from standby record` / `top=` 明明写着 `rocks.aston.hongguotv.MainActivity`，`WAKE candidate` 却拿不到可启动的 intent。
+
+**根因**：`wb_boot_whitelist` 有 14 个自装应用，但 `KNOWN_COMPONENTS` 静态组件表只映射了 13 个 —— **恰好缺红果TV**（它是后来加进白名单的）。Android 11 的包可见性限制使 `getLaunchIntentForPackage()` / `getLeanbackLaunchIntentForPackage()` 对别的包返回 null，`resolveBootIntent("rocks.aston.hongguotv")` 因此返回 null；`resolveWakeTarget()` 的 `probe != null` 判定失败，就静默回退到 `TARGET`（myDV）。开机冷启动走的是同一张表，所以同样会出错。
+
+**修复**（三点，均为增量、不影响 v4.0 的任务栈复用）：
+
+1. `KNOWN_COMPONENTS` 补 `{"rocks.aston.hongguotv", "rocks.aston.hongguotv/.MainActivity"}`（用 `cmd package resolve-activity` 实测确认）。
+2. `resolveWakeTarget()` 优先读 `SCREEN_OFF` 时持久化的 `last_class_pkg`，新增 `last_class_at` 时间戳与 7 天新鲜度校验；这样不再依赖只有 24 小时窗口、且会被唤醒后 HOME / 任务管理器事件污染的 UsageEvents，超长待机也不会选错。
+3. `resolveBootIntent()` 增加通用兜底：静态表未命中时，从 UsageEvents 最近一次前台事件或 SCREEN_OFF 记录取真实 Activity 类，构造显式 `ComponentName`。以后新装应用加入白名单也不会再回退 myDV。
+
+**验证**：覆盖安装并重绑后，日志 `WAKE via rebind seq=1 target=rocks.aston.hongguotv`、`WAKE candidate=... intent=ComponentInfo{rocks.aston.hongguotv/rocks.aston.hongguotv.MainActivity}`；两段唤醒共 10 次 `launched rocks.aston.hongguotv (task reuse)`，`launched com.github.mytv.dv=0`；`mCurrentFocus` 保持在红果TV，栈里没有多压首页。首次重绑时 `fresh=false` 属预期（旧版本没有写时间戳），走了 `recentWhitelistedApp()` 兜底并正确解析；用户下一次真实待机后即会命中 `WAKE target from standby record=` 分支。
+
 ## APK 指纹
 
 | 版本 | sha256（前 8 位） | 大小 |
@@ -54,6 +69,7 @@
 | v3.9 | `d63d67cf…3702` | 20946 B |
 | v3.9.1 | `b2c0beb3…aa83` | 20946 B |
 | v3.10 | `548ce646…1960` | 20946 B |
-| **v4.0** | **`bdc3c83c…85d3`** | **20946 B** |
+| v4.0 | `bdc3c83c…85d3` | 20946 B |
+| **v4.1** | **`bf40c492…1c5`** | **20946 B** |
 
 所有版本 V1/V2/V3 签名通过，清单均不含 HOME / LAUNCHER / queries（否则会触发 TCL 签名门）。

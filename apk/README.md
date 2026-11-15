@@ -6,7 +6,7 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `AndroidManifest.xml` | 当前 `versionCode 16 / versionName 3.0`。三项权限：`SYSTEM_ALERT_WINDOW`、`PACKAGE_USAGE_STATS`、`KILL_BACKGROUND_PROCESSES`；service 用 `BIND_ACCESSIBILITY_SERVICE` 保护并 `exported=true`。v4.0 已移除 v3.9.1 临时加的 `QUERY_ALL_PACKAGES` |
+| `AndroidManifest.xml` | 当前 `versionCode 17 / versionName 3.1`（v4.1：修复唤醒目标解析，补红果TV 组件映射）。三项权限：`SYSTEM_ALERT_WINDOW`、`PACKAGE_USAGE_STATS`、`KILL_BACKGROUND_PROCESSES`；service 用 `BIND_ACCESSIBILITY_SERVICE` 保护并 `exported=true`。v4.0 已移除 v3.9.1 临时加的 `QUERY_ALL_PACKAGES` |
 | `src/com/wb/mydvresume/ResumeService.java` | 全部逻辑：唤醒检测、任务栈恢复、冷启动目标、白名单、myDV 静音、系统设置读写 |
 | `res/xml/resume_config.xml` | 无障碍服务配置（`canRetrieveWindowContent` 当前**未**开启） |
 | `res/values/strings.xml` | 服务标签 / 描述（电视上显示为「myDV Resume」） |

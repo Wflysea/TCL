@@ -64,6 +64,17 @@ import java.util.List;
  * intended/foreground app, so the verified myDV resume is unaffected.
  * Configurable via Settings.System "wb_quiet_mydv" (0/off disables).
  *
+ * v4.1: fix "wake opens the WRONG app". The whitelist had 14 packages but
+ * KNOWN_COMPONENTS mapped only 13 -- Hongguo TV (rocks.aston.hongguotv) was
+ * missing. Android 11 package visibility blocks getLaunchIntentForPackage(),
+ * so resolveBootIntent() returned null and resolveWakeTarget() silently fell
+ * back to myDV even though the standby record correctly said Hongguo TV.
+ * Fixes: (1) add the missing component; (2) resolve the wake target from the
+ * SCREEN_OFF standby package first (immune to the 24h UsageEvents window and
+ * to HOME/task-manager events fired right after wake); (3) generic fallback
+ * building an explicit component from an observed Activity class for any
+ * newly installed whitelisted app.
+ *
  * v4.0: REAL fix for "wake lands on the app home page while audio keeps
  * playing". v3.6/v3.10 started an EXPLICIT HomeActivity with NEW_TASK|
  * SINGLE_TOP: because HomeActivity is singleTop and the task top was
@@ -111,6 +122,8 @@ public class ResumeService extends AccessibilityService {
     private static final String CFG_EXACT = "wb_exact_resume";
     private static final String SP_LAST_CLASS = "last_class";
     private static final String SP_LAST_CLASS_PKG = "last_class_pkg";
+    private static final String SP_LAST_CLASS_AT = "last_class_at";
+    private static final long STANDBY_MAX_AGE_MS = 604800000L; // 7 days
     private static final String DEFAULT_BOOT_TARGET = "com.github.mytv.dv";
     private static final String[] DEFAULT_WHITELIST = {
             "com.github.mytv.dv",
@@ -141,6 +154,7 @@ public class ResumeService extends AccessibilityService {
             {"com.tv.qx", "com.tv.qx/com.tv.core.ui.MainActivity"},
             {"com.ysc.tvbox",
                     "com.ysc.tvbox/com.github.tvbox.osc.ui.activity.HomeActivity"},
+            {"rocks.aston.hongguotv", "rocks.aston.hongguotv/.MainActivity"},
             {"uk.cctv6.mytv.legacz",
                     "uk.cctv6.mytv.legacz/top.yogiczy.mytv.legacy.activities.MainActivity"}
     };
@@ -240,7 +254,7 @@ public class ResumeService extends AccessibilityService {
         lastInteractive = true;
         handler.postDelayed(pollRunnable, POLL_MS);
 
-        Log.i(TAG, "service connected v4.0 (task-reuse wake), prevBindGap="
+        Log.i(TAG, "service connected v4.1 (standby-record wake target), prevBindGap="
                 + (prevBind > 0L ? (now - prevBind) : 0L)
                 + "ms, bootId=" + (curBoot.length() > 0 ? curBoot.substring(0, 8) : "n/a")
                 + ", coldBoot=" + coldBoot);
@@ -366,13 +380,27 @@ public class ResumeService extends AccessibilityService {
         }, WAKE_WINDOW_MS + 2000L);
     }
 
-    /** v3.4: resume the last whitelisted foreground app; else myDV (v2). */
+    /** v4.1: the SCREEN_OFF record is authoritative for "what was I watching".
+     *  v3.4 used recentWhitelistedApp() only; its 24h UsageEvents window and
+     *  the HOME/task-manager events fired right after wake could select the
+     *  wrong app, and an unlaunchable candidate silently fell back to myDV. */
     private String resolveWakeTarget() {
+        SharedPreferences sp = getSharedPreferences("state", MODE_PRIVATE);
+        String standby = sp.getString(SP_LAST_CLASS_PKG, "");
+        long at = sp.getLong(SP_LAST_CLASS_AT, 0L);
+        boolean fresh = at > 0L
+                && (System.currentTimeMillis() - at) < STANDBY_MAX_AGE_MS;
+        if (fresh && standby.length() > 0 && isAllowed(standby)
+                && resolveBootIntent(standby) != null) {
+            Log.i(TAG, "WAKE target from standby record=" + standby);
+            return standby;
+        }
         String p = recentWhitelistedApp(false);
         Intent probe = resolveBootIntent(p);
         Log.i(TAG, "WAKE candidate=" + (p == null ? "" : p)
                 + " intent=" + (probe == null ? "null"
-                : String.valueOf(probe.getComponent())));
+                : String.valueOf(probe.getComponent()))
+                + " standby=" + standby + " fresh=" + fresh);
         if (p != null && p.length() > 0 && isAllowed(p) && probe != null) {
             return p;
         }
@@ -494,6 +522,7 @@ public class ResumeService extends AccessibilityService {
                     getSharedPreferences("state", MODE_PRIVATE).edit();
             ed.putString(SP_LAST_CLASS_PKG, pair[0]);
             ed.putString(SP_LAST_CLASS, pair[1]);
+            ed.putLong(SP_LAST_CLASS_AT, System.currentTimeMillis());
             ed.commit();
             lastClass = pair[1];
             Log.i(TAG, "standby class=" + pair[1] + " (" + pair[0] + ")");
@@ -786,6 +815,27 @@ public class ResumeService extends AccessibilityService {
                     }
                     break;
                 }
+            }
+        }
+        if (i == null) {
+            // v4.1: generic fallback for whitelisted apps installed AFTER the
+            // static table was built. UsageEvents (and the SCREEN_OFF record)
+            // give us the real Activity class even when PackageManager cannot
+            // resolve a launcher intent for another package.
+            String[] pair = lastAllowedForegroundPair();
+            String cls = "";
+            if (pair[0].equals(pkg) && pair[1].length() > 0) {
+                cls = pair[1];
+            } else {
+                SharedPreferences sp = getSharedPreferences("state", MODE_PRIVATE);
+                if (sp.getString(SP_LAST_CLASS_PKG, "").equals(pkg)) {
+                    cls = sp.getString(SP_LAST_CLASS, "");
+                }
+            }
+            if (cls.length() > 0) {
+                i = new Intent();
+                i.setComponent(new ComponentName(pkg, cls));
+                Log.i(TAG, "resolved " + pkg + " from observed class=" + cls);
             }
         }
         return i;

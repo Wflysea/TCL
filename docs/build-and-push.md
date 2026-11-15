@@ -97,6 +97,8 @@ python verify_quiet.py --report
 
 v4.0 应看到连续多次 `launched ... (task reuse)`、`legacy fallback=0`、`SecurityException=0`。
 
+v4.1 起还应确认 `WAKE via ... target=` 与**待机前正在用的应用**一致，`launched` 的包名相同；若仍是 `com.github.mytv.dv`，查 `WAKE candidate=... intent=null` 和静态组件表是否覆盖该包。
+
 ## 6. 真实待机唤醒测试（必须人工）
 
 **不能用 adb 注入电源键**（`input keyevent 26` 会让 5555 掉线且唤不醒）：

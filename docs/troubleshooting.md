@@ -74,3 +74,29 @@ app_auto_boot_auto_management=0
 - 中文路径下 aapt2 出错 → 源码固定在 `C:\Temp\wbapk`。
 - pythonw 黑框 → 脚本里用 `CREATE_NO_WINDOW`。
 - 电脑侧守护 / 计划任务已按用户要求**全部停用**，不要重新启动。
+
+
+## 症状：待机唤醒后打开的是**另一个应用**（v4.1 已修）
+
+现象（2026-11-15 18:51）：待机前在看红果TV，唤醒后服务连续把 myDV 拉到前台；按 HOME 回桌面也会被服务的纠正点拉回。
+
+排查时先看服务日志的这两行：
+
+```
+WAKE candidate=<包名> intent=null standby=<包名> fresh=...
+WAKE via ... target=com.github.mytv.dv
+```
+
+`WAKE class from standby record` / `top=` 显示的是**正确的**待机前页面，但 `target` 却是 myDV —— 这说明问题不在「记住了哪个界面」，而在**目标包无法解析出可启动的 intent**。
+
+核对方法：
+
+```bash
+# 白名单与静态组件表是否一一对应
+settings get system wb_boot_whitelist
+cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER <包名>
+```
+
+本例 14 个白名单应用里 `KNOWN_COMPONENTS` 只映射了 13 个，缺的正是后加的红果TV。Android 11 包可见性让 `getLaunchIntentForPackage()` 返回 null，`resolveWakeTarget()` 的 `probe != null` 失败 → 静默回退 `TARGET`。**补组件表 + 改用 SCREEN_OFF 待机记录选目标 + 通用 class 兜底** 后解决；详见 [CHANGELOG.md 的 v4.1 根因](../CHANGELOG.md)。
+
+不要往「任务栈 / SINGLE_TOP / 播放页不导出」方向排查——那是 v4.0 已解决的另一类症状（进应用首页、有声音没画面）。

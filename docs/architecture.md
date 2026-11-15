@@ -1,7 +1,7 @@
 # 服务原理
 
 > 面向想改代码的人。完整实现见 [`apk/src/com/wb/mydvresume/ResumeService.java`](../apk/src/com/wb/mydvresume/ResumeService.java)。
-> 当前版本 v4.0（`versionCode 16 / 3.0`）。
+> 当前版本 v4.1（`versionCode 17 / 3.1`）。
 
 ## 1. 整体架构
 
@@ -97,3 +97,17 @@ python boot_target.py --exact-off         # 关闭精确恢复分支
 python verify_quiet.py --clear / --report # 静音实测（SCREEN_OFF → WAKE → quiet 时序）
 python reboot_verify.py                   # 重启后配置保留核查
 ```
+
+
+## 9. v4.1：唤醒目标解析（避免回退到 myDV）
+
+v4.0 解决了「回到哪个界面」，但没有保证「回到哪个应用」。Android 11 的包可见性限制下，第三方服务无法解析别的包的 launcher intent，因此启动入口依赖 `KNOWN_COMPONENTS` 静态表；白名单后来新增的红果TV 没进这张表，`resolveBootIntent()` 返回 null，`resolveWakeTarget()` 就静默回退到默认目标 myDV。
+
+v4.1 的目标解析顺序：
+
+1. `SCREEN_OFF` 时把 `last_class_pkg` / `last_class` / `last_class_at` 写入 SharedPreferences（`commit()` 同步落盘，防止快速休眠丢记录）。
+2. 唤醒时 `resolveWakeTarget()` 先取 `last_class_pkg`，要求：记录时间 < 7 天、包在白名单内、`resolveBootIntent()` 能拿到 intent；命中即返回。
+3. 否则退回 v3.4 的 `recentWhitelistedApp()`（UsageEvents 24h → UsageStats 3 天 → 本地 `last_app`），并在日志里打印 `standby=` 与 `fresh=` 便于诊断。
+4. `resolveBootIntent()`：PackageManager → `KNOWN_COMPONENTS` → **新增**从 UsageEvents / 待机记录取真实 Activity 类构造显式 `ComponentName`。
+
+`launch()` 的任务栈复用写法（显式组件 + MAIN/LAUNCHER + `RESET_TASK_IF_NEEDED`、无 `SINGLE_TOP`）、5 次纠正、`quietMyDv()` 与冷启动逻辑均未改动。

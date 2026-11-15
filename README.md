@@ -3,8 +3,9 @@
 围绕一台 TCL 电视做的完整工程记录：一个**纯电视端、脱离电脑**运行的无障碍服务（待机唤醒后回到原播放界面），以及精简、备份、还原、厂家远控审计、后台加固、诊断与推送的全部脚本。
 
 - 仓库：<https://github.com/Wflysea/TCL>
-- 当前版本：**v4.0** / `versionCode 16` / `versionName 3.0`
+- 当前版本：**v4.1** / `versionCode 17` / `versionName 3.1`
 - **状态：✅ 2026-11-14 用户用真实遥控器完成「暂停 → 待机 → 唤醒」测试，成功回到暂停前界面并接着播放**（[实测记录](CHANGELOG.md)）
+- **v4.1（2026-11-15）**：修复「唤醒拉错应用」——待机前在红果TV，唤醒却固定拉 myDV。根因是静态组件表缺少 `rocks.aston.hongguotv` 的映射；已补齐并改为按 SCREEN_OFF 待机记录选目标。
 - 版本演进见 [CHANGELOG.md](CHANGELOG.md)
 
 ---
@@ -16,7 +17,7 @@
 | 电视 | TCL 75V8L-C3，Android 11 (SDK 30)，armeabi-v7a |
 | 设备代号 | `tc8000_ay30a2` |
 | ADB | 网络调试 `192.168.1.26:5555` |
-| 目标应用 | myDV `com.github.mytv.dv`（官方 2.3.44）、讴歌影视 `com.cctv.yangshipin.app.androidq` |
+| 目标应用 | myDV `com.github.mytv.dv`（官方 2.3.44）、讴歌影视 `com.cctv.yangshipin.app.androidq`、红果TV `rocks.aston.hongguotv` |
 | 服务包名 | `com.wb.mydvresume` |
 | 构建环境 | 本机 `C:\Temp\wbapk`，纯 aapt2 + javac + dx + apksigner，无 Gradle/Android Studio |
 
@@ -56,7 +57,7 @@
 ```
 TCL/
 ├── README.md                  本文件
-├── CHANGELOG.md               v1 → v4.0 完整版本演进
+├── CHANGELOG.md               v1 → v4.1 完整版本演进
 ├── .gitignore                 排除私钥 / 令牌 / 大二进制
 ├── apk/                       当前版本完整源码
 │   ├── AndroidManifest.xml

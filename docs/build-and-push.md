@@ -16,10 +16,13 @@
 
 ## 1. 升版本号（覆盖安装必须递增）
 
-两处必须同步：
+只需改一处：
 
 - `C:\Temp\wbapk\AndroidManifest.xml` → `android:versionCode` / `android:versionName`
-- `scripts/push_apk.py` → `VERSION`（多屏互动安装协议里带上版本）
+
+`scripts/push_apk.py` **不再有硬编码的 `VERSION`**（2026-11-15 起）：脚本用 `aapt2 dump badging` 直接从签名 APK 读取 `versionCode` / `versionName`（工具链缺失时回退读清单），协议帧、控制台横幅、电视弹窗标签、下载文件名全部取自同一份数据，不会再出现「改了清单忘了改脚本」导致推送版本显示错误。
+
+可选：`push_apk.py` 里的 `RELEASE_NAMES` 字典把 `versionCode` 映射成 `v4.2.1` 这类发布名，仅用于显示，不参与协议字段。
 
 再改源码（`ResumeService.java`）和日志标记 `service connected vX.Y`，方便从 logcat 判断设备上跑的是哪一版。
 
@@ -44,8 +47,19 @@ sha256sum MyDvResume.apk                                     # 记录指纹
 
 ```bash
 cd E:\WorkBuddy\闲聊\_tmp\tcl75v8l_backup
-python push_apk.py
+python push_apk.py              # 推送（控制台横幅 + 电视弹窗都显示版本）
+python push_apk.py --info-only   # 只查本地 APK 和电视已装版本，不推送
 ```
+
+**版本显示（2026-11-15 修复「推送时看不到版本号」）**：tcast 的 `INSTALL` 帧虽然带 `versionCode` 字段，但 TCL 确认弹窗**不渲染该字段**，只显示 label。因此脚本在三处同时显示版本：
+
+| 位置 | 示例 |
+| --- | --- |
+| 推送前控制台横幅 | `PUSHING myDV Resume v4.2.1` / `versionCode: 19` / `versionName: 3.3` / sha256 / 电视已装版本 |
+| 电视端确认弹窗标签 | `myDV Resume 3.3 / vc19 (v4.2.1)` |
+| 电视下载文件名 | `MyDvResume-v3.3-vc19.apk`（APK 的字节副本，进程退出自动删除） |
+
+安装成功后还会打印 `=== VERSION CHECK ===` 的 before → after 对比。想让弹窗恢复原始应用名，用 `--plain-label`。
 
 - 走 **6553 tcast / `com.tcl.MultiScreenInteraction_TV`** 多屏互动，不是 `adb install`。
 - **电视端会弹安装确认：按「右」选中「同意」再按确认。**

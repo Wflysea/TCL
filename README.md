@@ -90,7 +90,9 @@ TCL/
 cd C:\Temp\wbapk && python build_apk.py
 
 # 2) 推送到电视（电视端按「右 → 同意」）
+#    控制台横幅与电视弹窗都会显示 versionCode / versionName / 发布名
 cd E:\WorkBuddy\闲聊\_tmp\tcl75v8l_backup && python push_apk.py
+python push_apk.py --info-only   # 只查本地 APK 与电视已装版本，不推送
 
 # 3) 覆盖安装后重绑无障碍服务 + 恢复后台策略（必做）
 python finalize_resume.py

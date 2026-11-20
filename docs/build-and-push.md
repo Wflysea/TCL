@@ -22,7 +22,7 @@
 
 `scripts/push_apk.py` **不再有硬编码的 `VERSION`**（2026-11-15 起）：脚本用 `aapt2 dump badging` 直接从签名 APK 读取 `versionCode` / `versionName`（工具链缺失时回退读清单），协议帧、控制台横幅、下载文件名全部取自同一份数据，不会再出现「改了清单忘了改脚本」导致推送版本显示错误。
 
-可选：`push_apk.py` 里的 `RELEASE_NAMES` 字典把 `versionCode` 映射成 `v4.4` 这类发布名，仅用于显示，不参与协议字段。
+可选：`push_apk.py` 里的 `RELEASE_NAMES` 字典把 `versionCode` 映射成 `v4.5` 这类发布名，仅用于显示，不参与协议字段。
 
 再改源码（`ResumeService.java`）和日志标记 `service connected vX.Y`，方便从 logcat 判断设备上跑的是哪一版。
 
@@ -57,11 +57,11 @@ python push_apk.py --plain-source  # TCL 弹窗来源名退回「1」，不显�
 
 | 位置 | 示例 | 可见？ |
 | --- | --- | --- |
-| TCL 弹窗 `tv_content` 前缀（来自 `159>>` 握手帧来源名） | `Resume v4.4 (3.5 / vc21) 正在发起应用推送…` | ✅ 电视 |
-| 推送前控制台横幅 | `PUSHING myDV Resume v4.4` / `versionCode: 21` / `versionName: 3.5` / sha256 / 电视已装版本 | ✅ PC |
-| 安装后 `=== VERSION CHECK ===` | `before 20/3.4 → after 21/3.5` | ✅ PC |
-| tcast `INSTALL` 帧的 label | `Resume 3.5 / vc21 (v4.4)` | ❌ |
-| 下载文件名 | `MyDvResume-v3.5-vc21.apk` | ❌ |
+| TCL 弹窗 `tv_content` 前缀（来自 `159>>` 握手帧来源名） | `Resume v4.5 (3.6 / vc22) 正在发起应用推送…` | ✅ 电视 |
+| 推送前控制台横幅 | `PUSHING Resume v4.5` / `versionCode: 22` / `versionName: 3.6` / sha256 / 电视已装版本 | ✅ PC |
+| 安装后 `=== VERSION CHECK ===` | `before 21/3.5 → after 22/3.6` | ✅ PC |
+| tcast `INSTALL` 帧的 label | `Resume 3.6 / vc22 (v4.5)` | ❌ |
+| 下载文件名 | `MyDvResume-v3.6-vc22.apk` | ❌ |
 
 **「1」的真身 / 电视弹窗怎么显示版本（2026-11-20 更正）**：过去 tv_content 里的「1」不是写死编号，而是 `159>>X>>0` 握手帧第 2 项（来源设备名）——官方多屏互动填手机型号，我们脚本以前写死「1」。`push_source()` 现在填入应用名 + 版本，真机验证完整显示无截断；`sizeMB` / label / 文件名 / 系统通知都进不了 tv_content（这些尝试仍无效，见 [troubleshooting.md](troubleshooting.md)）。
 

@@ -9,7 +9,8 @@
 | `MyDvResume-vc17.apk` | v4.1 | 17 / 3.1 | 唤醒目标改用 SCREEN_OFF 待机记录 + 补全组件表，sha256 `bf40c492…1c5` |
 | `MyDvResume-vc19.apk` | v4.2.1 | 19 / 3.3 | 自动学习白名单，集合收紧到 `pm -3` 语义（15 个自装应用），sha256 `4a50c6b6…3ee` |
 | `MyDvResume-vc20.apk` | v4.3 | 20 / 3.4 | 电视端 `TYPE_ACCESSIBILITY_OVERLAY` 版本横幅（推送时显示应用名与版本号），sha256 `39b03d28…a0a`；横幅已在 v4.4 移除 |
-| `MyDvResume-vc21.apk` | v4.4 | 21 / 3.5 | **当前版本**：唤醒严格单次启动（4000ms + `wakeLaunchOnce` gate）、彻底移除推送横幅，sha256 `710e94d3…c0` |
+| `MyDvResume-vc21.apk` | v4.4 | 21 / 3.5 | 唤醒严格单次启动（4000ms + `wakeLaunchOnce` gate）、彻底移除推送横幅，sha256 `710e94d3…c0` |
+| `MyDvResume-vc22.apk` | v4.5 | 22 / 3.6 | **当前版本**：应用显示名 `myDV Resume` → `Resume`（`android:label` + `app_name`），功能逻辑不变，sha256 `9eb84f3f…da9` |
 
 > v4.2（`versionCode 18 / 3.2`）是同一轮开发中的中间构建：成品 APK 已被 v4.2.1 覆盖、未单独归档，仅记录 sha256 `79cbd45c…e63`。它与 v4.2.1 的唯一差别是「是否把 `FLAG_UPDATED_SYSTEM_APP` 也算成自装应用」，见 [CHANGELOG.md](../CHANGELOG.md)。
 

@@ -3,8 +3,9 @@
 围绕一台 TCL 电视做的完整工程记录：一个**纯电视端、脱离电脑**运行的无障碍服务（待机唤醒后回到原播放界面），以及精简、备份、还原、厂家远控审计、后台加固、诊断与推送的全部脚本。
 
 - 仓库：<https://github.com/Wflysea/TCL>
-- 当前版本：**v4.4** / `versionCode 21` / `versionName 3.5`
+- 当前版本：**v4.5** / `versionCode 22` / `versionName 3.6`
 - **状态：✅ 2026-11-14 用户用真实遥控器完成「暂停 → 待机 → 唤醒」测试，成功回到暂停前界面并接着播放**（[实测记录](CHANGELOG.md)）
+- **v4.5（2026-11-20）应用显示名改名**：`android:label` 与 `strings.xml` 的 `app_name` 由 `myDV Resume` 改为 **`Resume`**，电视应用列表/无障碍设置里显示为 Resume；功能逻辑零改动，唤醒单次启动与自动学习保持 v4.4 不变。已重建签名 APK（`9eb84f3f…da9`）、tcast 推送安装（21/3.5 → 22/3.6）并重绑无障碍服务通过。推送弹窗来源名也同步显示「Resume v4.5 (3.6 / vc22)」。注意 APK 包名仍是 `com.wb.mydvresume`。
 - **v4.4（2026-11-20）两项调整**：① **唤醒严格只启动一次**——单次 `startActivity` 安排在唤醒后 4000ms（避开 TCL 在 2～3 秒时推 HOME），并用 `wakeLaunchOnce` 硬 gate 保证重复事件不再启动；v4.0 的 task-reuse 启动方式一行未改。② **彻底移除推送横幅**——v4.3 的 `TYPE_ACCESSIBILITY_OVERLAY` 版本横幅与其 `PUSH_BANNER` 接收器从服务和脚本中全部删除；版本号只在 PC 控制台显示，电视端不再画横幅。冷开机（开机自启）逻辑不受影响。
 - **v4.3（2026-11-15）推送横幅（已被 v4.4 移除）**：曾在左下角画版本横幅；因当时误以为弹窗文案写死，且用户不再需要，v4.4 已彻底删除。**2026-11-20 更正**：弹窗文案并非完全写死——`159>>` 握手帧第 2 项是「来源名」，官方填手机型号；现脚本填入版本，弹窗直接显示版本（见 [troubleshooting](docs/troubleshooting.md)），无需横幅。
 - **v4.2 / v4.2.1（2026-11-15）自动学习版**：以后电视**新装应用不用连电脑、不用改白名单**——服务自己扫描自装应用、监听 `PACKAGE_ADDED`、缓存启动组件；待机唤醒自动回到新应用原来的界面。v4.1 的「待机记录优先选目标」继续保留。
@@ -62,7 +63,7 @@
 ```
 TCL/
 ├── README.md                  本文件
-├── CHANGELOG.md               v1 → v4.4 完整版本演进
+├── CHANGELOG.md               v1 → v4.5 完整版本演进
 ├── .gitignore                 排除私钥 / 令牌 / 大二进制
 ├── apk/                       当前版本完整源码
 │   ├── AndroidManifest.xml
@@ -92,7 +93,7 @@ TCL/
 cd C:\Temp\wbapk && python build_apk.py
 
 # 2) 推送到电视（电视端按「右 → 同意」）
-#    版本号只在 PC 控制台显示；v4.4 起电视端不再有横幅
+#    版本号经 159 握手帧显示在 TCL 原生弹窗；无自定义横幅
 cd E:\WorkBuddy\闲聊\_tmp\tcl75v8l_backup && python push_apk.py
 python push_apk.py --info-only     # 只查本地 APK 与电视已装版本，不推送
 

@@ -6,7 +6,7 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `AndroidManifest.xml` | 当前 `versionCode 21 / versionName 3.5`（v4.4：单次启动 + 移除横幅）。清单没有新增组件，也不含 HOME / LAUNCHER / `<queries>`。四项权限：`SYSTEM_ALERT_WINDOW`、`PACKAGE_USAGE_STATS`、`KILL_BACKGROUND_PROCESSES`、`QUERY_ALL_PACKAGES`；service 用 `BIND_ACCESSIBILITY_SERVICE` 保护并 `exported=true`。`QUERY_ALL_PACKAGES` 是普通 `<uses-permission>`（v3.9.1 已验证 TCL 验证器接受），用于让自动学习看见新装应用；**不是** `<queries>` |
+| `AndroidManifest.xml` | 当前 `versionCode 22 / versionName 3.6`（v4.5：应用显示名改为 Resume）。清单没有新增组件，也不含 HOME / LAUNCHER / `<queries>`。四项权限：`SYSTEM_ALERT_WINDOW`、`PACKAGE_USAGE_STATS`、`KILL_BACKGROUND_PROCESSES`、`QUERY_ALL_PACKAGES`；service 用 `BIND_ACCESSIBILITY_SERVICE` 保护并 `exported=true`。`QUERY_ALL_PACKAGES` 是普通 `<uses-permission>`（v3.9.1 已验证 TCL 验证器接受），用于让自动学习看见新装应用；**不是** `<queries>` |
 | `src/com/wb/mydvresume/ResumeService.java` | 全部逻辑：唤醒检测（**v4.4 严格单次启动**：4000ms 单点 + `wakeLaunchOnce` gate）、任务栈恢复、冷启动目标、**自动学习白名单**（全量扫描 + `PACKAGE_ADDED` 增量 + 组件缓存）、myDV 静音、系统设置读写。v4.3 的推送横幅代码已在 v4.4 全部删除 |
 | `res/xml/resume_config.xml` | 无障碍服务配置（`canRetrieveWindowContent` 当前**未**开启） |
 | `res/values/strings.xml` | 服务标签 / 描述（电视上显示为「myDV Resume」） |
@@ -53,4 +53,4 @@ python push_apk.py      # 电视端按「右 → 同意」；版本号显示在 
 python finalize_resume.py   # 覆盖安装后必须重绑
 ```
 
-v4.4 起**不再有电视端自定义横幅**（v4.3 的 `PUSH_BANNER` / `--banner-only` / `--hide-banner` 已删除）。2026-11-20 起版本号通过 `159>>` 握手帧的来源名显示在 **TCL 原生弹窗**里（如「Resume v4.4 (3.5 / vc21) 正在发起应用推送…」）；`--plain-source` 可退回旧「1」。PC 控制台仍有推送横幅与 `VERSION CHECK`，见 [docs/build-and-push.md](../docs/build-and-push.md)、[troubleshooting](../docs/troubleshooting.md)。
+v4.4 起**不再有电视端自定义横幅**（v4.3 的 `PUSH_BANNER` / `--banner-only` / `--hide-banner` 已删除）。2026-11-20 起版本号通过 `159>>` 握手帧的来源名显示在 **TCL 原生弹窗**里（如「Resume v4.5 (3.6 / vc22) 正在发起应用推送…」）；`--plain-source` 可退回旧「1」。PC 控制台仍有推送横幅与 `VERSION CHECK`，见 [docs/build-and-push.md](../docs/build-and-push.md)、[troubleshooting](../docs/troubleshooting.md)。

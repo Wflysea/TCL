@@ -3,9 +3,10 @@
 围绕一台 TCL 电视做的完整工程记录：一个**纯电视端、脱离电脑**运行的无障碍服务（待机唤醒后回到原播放界面），以及精简、备份、还原、厂家远控审计、后台加固、诊断与推送的全部脚本。
 
 - 仓库：<https://github.com/Wflysea/TCL>
-- 当前版本：**v4.3** / `versionCode 20` / `versionName 3.4`
+- 当前版本：**v4.4** / `versionCode 21` / `versionName 3.5`
 - **状态：✅ 2026-11-14 用户用真实遥控器完成「暂停 → 待机 → 唤醒」测试，成功回到暂停前界面并接着播放**（[实测记录](CHANGELOG.md)）
-- **v4.3（2026-11-15）推送横幅**：TCL 的多屏互动确认框文案写死在系统资源里，协议里的应用名 / 版本号根本不渲染。现在推送时无障碍服务会在**左下角画一条 `TYPE_ACCESSIBILITY_OVERLAY` 横幅**，显示应用名、`v4.3`、`versionName 3.4`、`versionCode 20`；不遮挡右上角弹窗、不拦截遥控器按键，45 秒后自动消失（`--banner-only` / `--hide-banner` 可单独控制）。
+- **v4.4（2026-11-20）两项调整**：① **唤醒严格只启动一次**——单次 `startActivity` 安排在唤醒后 4000ms（避开 TCL 在 2～3 秒时推 HOME），并用 `wakeLaunchOnce` 硬 gate 保证重复事件不再启动；v4.0 的 task-reuse 启动方式一行未改。② **彻底移除推送横幅**——v4.3 的 `TYPE_ACCESSIBILITY_OVERLAY` 版本横幅与其 `PUSH_BANNER` 接收器从服务和脚本中全部删除；版本号只在 PC 控制台显示，电视端不再画横幅。冷开机（开机自启）逻辑不受影响。
+- **v4.3（2026-11-15）推送横幅（已被 v4.4 移除）**：曾在左下角画版本横幅；因该弹窗文案写死在系统资源、协议字段不渲染，且用户不再需要，v4.4 已彻底删除。
 - **v4.2 / v4.2.1（2026-11-15）自动学习版**：以后电视**新装应用不用连电脑、不用改白名单**——服务自己扫描自装应用、监听 `PACKAGE_ADDED`、缓存启动组件；待机唤醒自动回到新应用原来的界面。v4.1 的「待机记录优先选目标」继续保留。
 - **v4.1（2026-11-15）**：修复「唤醒拉错应用」——待机前在红果TV，唤醒却固定拉 myDV。根因是静态组件表缺少 `rocks.aston.hongguotv` 的映射；已补齐并改为按 SCREEN_OFF 待机记录选目标。
 - 版本演进见 [CHANGELOG.md](CHANGELOG.md)
@@ -61,7 +62,7 @@
 ```
 TCL/
 ├── README.md                  本文件
-├── CHANGELOG.md               v1 → v4.3 完整版本演进
+├── CHANGELOG.md               v1 → v4.4 完整版本演进
 ├── .gitignore                 排除私钥 / 令牌 / 大二进制
 ├── apk/                       当前版本完整源码
 │   ├── AndroidManifest.xml
@@ -91,11 +92,9 @@ TCL/
 cd C:\Temp\wbapk && python build_apk.py
 
 # 2) 推送到电视（电视端按「右 → 同意」）
-#    PC 控制台 + 电视左下角横幅都会显示应用名 / versionCode / versionName
+#    版本号只在 PC 控制台显示；v4.4 起电视端不再有横幅
 cd E:\WorkBuddy\闲聊\_tmp\tcl75v8l_backup && python push_apk.py
 python push_apk.py --info-only     # 只查本地 APK 与电视已装版本，不推送
-python push_apk.py --banner-only   # 只在电视上显示版本横幅，不推送 APK
-python push_apk.py --hide-banner   # 立即收起横幅
 
 # 3) 覆盖安装后重绑无障碍服务 + 恢复后台策略（必做）
 python finalize_resume.py

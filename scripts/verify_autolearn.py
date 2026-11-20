@@ -32,8 +32,8 @@ import time
 TV = "192.168.1.26:5555"
 ADB = r"E:\WorkBuddy\闲聊\_tmp\platform-tools\adb.exe"
 PKG = "com.wb.mydvresume"
-EXPECT_VC = "20"
-EXPECT_VN = "3.4"
+EXPECT_VC = "21"
+EXPECT_VN = "3.5"
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # Mirrors ResumeService.SKIP_PKGS: never resumed, so not counted as learnable.

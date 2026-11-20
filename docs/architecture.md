@@ -1,7 +1,7 @@
 # 服务原理
 
 > 面向想改代码的人。完整实现见 [`apk/src/com/wb/mydvresume/ResumeService.java`](../apk/src/com/wb/mydvresume/ResumeService.java)。
-> 当前版本 v4.3（`versionCode 20 / 3.4`，自动学习白名单 + 电视端版本横幅）。
+> 当前版本 v4.4（`versionCode 21 / 3.5`，自动学习白名单 + 唤醒严格单次启动；v4.3 的电视端版本横幅已移除）。
 
 ## 1. 整体架构
 
@@ -13,7 +13,7 @@ flowchart TD
     C --> E[2 秒轮询 isInteractive<br/>+ elapsedRealtime 长间隔]
     C --> F[服务重绑定间隔检测]
     D & E & F --> G{是唤醒?}
-    G -->|是| H[5 次纠正: 0.8/2.5/5/9/13 s]
+    G -->|是| H[单次启动: 唤醒后 4 s]
     G -->|冷启动| I[120 s 内引导进记忆应用]
     H --> J[目标非 myDV → 清 myDV 后台音频]
     H --> K[显式组件 + MAIN/LAUNCHER<br/>+ RESET_TASK_IF_NEEDED<br/>把整个任务栈原样带回前台]
@@ -30,7 +30,7 @@ v1 只靠 `onAccessibilityEvent` 结果事件根本不派发，从 v2 起改成�
 2. 每 2 秒轮询 `PowerManager.isInteractive()`，并用 `elapsedRealtime` 的长间隔（跨待机时长）识别「刚亮屏」；
 3. `onServiceConnected` 里比较本次绑定与上次绑定的间隔，服务被 TCL `FreezeManager` 冻结后重绑定也能补一次唤醒。
 
-命中后设 `wokeAt`，在 `DELAYS = {800, 2500, 5000, 9000, 13000}` 毫秒处执行 5 次纠正，窗口约 15 秒。**这 5 次是对抗 TCL 亮屏 2~3 秒后才把桌面抢到前台的关键**，v3.8 曾把它们压成 1 次导致功能回归，v4.0 已恢复全部执行。
+命中后设 `wokeAt`，**v4.4 起只在 `DELAYS = {4000}` 毫秒处启动一次**（`wakeLaunchOnce` 硬 gate 保证重复事件不再二次启动；`onAccessibilityEvent` 的 HOME 事件不再触发 launch）。启动点选在 4000ms 是为了**避开 TCL 亮屏后 2~3 秒才压桌面的动作**：v4.0～v4.3 用 5 次纠正（800/2500/5000/9000/13000ms）覆盖整个桌面争夺窗口，v4.4 按用户要求收敛为 1 次，因此把这一次放在桌面动作之后。v3.8 曾把 5 次压成 1 次却仍停在早期（0.8s 附近）导致回归——v4.4 的关键区别是**那唯一一次足够晚**。冷开机走独立的 `launchBoot()`，7 次纠正不受此 gate 影响。
 
 ## 3. v4.0 的任务栈恢复（核心）
 
@@ -52,7 +52,7 @@ startActivity(bring);
 - **显式组件**：TCL 对第三方服务的隐式 `MAIN/LAUNCHER` intent 拒绝解析（实测连 `adb shell` 都报 unable to resolve），显式写法绕开该限制。组件来自静态表 `resolveBootIntent()`，解析不到就回退 myDV 的 `MainActivity`。
 - **绝不能用 `FLAG_ACTIVITY_SINGLE_TOP`**：讴歌影视 `HomeActivity` 是 `singleTop`，而待机时栈顶通常是 `DetailActivity`，`SINGLE_TOP` 不命中就会**新建一个首页压上去**（A/B 实证：任务栈从 3 个变 4 个），这正是「进应用了、在首页、有声音没画面」的直接原因。
 - `RESET_TASK_IF_NEEDED` 提供 launcher 语义：桌面在前台时系统返回 `its current task has been brought to the front`，**整个任务栈原样带回、栈顶仍是原页面、不新建任何 Activity**。
-- 这个调用是**幂等**的，所以 5 次纠正可以全部执行而不会叠页面；若系统拒绝该 Intent，会 `catch` 后走 legacy fallback（旧的显式 `SINGLE_TOP` 启动），保证不会比旧版更差。
+- 这个调用是**幂等**的；v4.0～v4.3 靠这一点执行 5 次纠正也不会叠页面，v4.4 收敛为 1 次。若系统拒绝该 Intent，会 `catch` 后走 legacy fallback（旧的显式 `SINGLE_TOP` 启动），保证不会比旧版更差。
 - v4.0 删除了 v3.6 的「精确恢复」分支：它每次都因 `DetailActivity` / `PlayActivity` `exported=false` 抛 `SecurityException`，且可能抢先返回；任务栈复用已能保留整个栈顶，不需要它。`SCREEN_OFF` 时仍会记录当时的 class，用于诊断日志和 `--wake-report`。
 
 ## 4. 冷启动目标（C 折中）
@@ -111,7 +111,7 @@ v4.1 的目标解析顺序：
 3. 否则退回 v3.4 的 `recentWhitelistedApp()`（UsageEvents 24h → UsageStats 3 天 → 本地 `last_app`），并在日志里打印 `standby=` 与 `fresh=` 便于诊断。
 4. `resolveBootIntent()`：PackageManager → `KNOWN_COMPONENTS` → **新增**从 UsageEvents / 待机记录取真实 Activity 类构造显式 `ComponentName`。
 
-`launch()` 的任务栈复用写法（显式组件 + MAIN/LAUNCHER + `RESET_TASK_IF_NEEDED`、无 `SINGLE_TOP`）、5 次纠正、`quietMyDv()` 与冷启动逻辑均未改动。
+`launch()` 的任务栈复用写法（显式组件 + MAIN/LAUNCHER + `RESET_TASK_IF_NEEDED`、无 `SINGLE_TOP`）、`quietMyDv()` 与冷启动逻辑均未改动。启动次数见第 2 节：v4.4 起由 5 次纠正收敛为 4000ms 单次 + 硬 gate。
 
 ## 10. v4.2：自动学习白名单
 
@@ -150,26 +150,23 @@ isAllowed() = 静态白名单 ∪ dynamicAllow
 
 **不能自动的部分**：TCL 的 `APP_AUTO_START` / `APP_ASSOC_START` appops 需要 shell 权限，第三方应用无法给别的应用授权。「待机 → 唤醒」主路径完全脱离电脑；**断电冷开机**自动进新装应用可选跑一次 `verify_autolearn.py --allow-autostart`。完整原理与实测日志见 [CHANGELOG.md 的 v4.2 章节](../CHANGELOG.md)。
 
-## 11. v4.3：推送时的电视端版本横幅
+## 11. v4.4：严格单次启动 + 移除电视端横幅
 
-TCL 的多屏互动安装确认框文案写死在系统资源里（只有 `tv_title` / `tv_content` / 两个按钮 / 图标），协议字段（label、`versionCode`、文件名、`sizeMB`）、`cmd notification post` 通知和展开通知面板都无法注入应用名或版本。所以版本信息由服务自己画：
+按用户要求做了两项调整：
 
-```text
-push_apk.py
-  └─ adb shell am broadcast -a com.wb.mydvresume.PUSH_BANNER
-       --es tag v4.3 --es vn 3.4 --es vc 20 --ei duration 45
-                      │  (显式广播；extras 全 ASCII，中文提示编译在服务里)
-                      ▼
-ResumeService.bannerReceiver (动态注册于 onServiceConnected)
-  └─ showBanner(): WindowManager.addView(TextView,
-         TYPE_ACCESSIBILITY_OVERLAY,
-         FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCHABLE | NOT_TOUCH_MODAL)
-       gravity = BOTTOM|LEFT, x=48, y=48
-       handler.postDelayed(hideBanner, 45s)
+**① 唤醒严格只启动一次。** v4.0～v4.3 在 `DELAYS = {800, 2500, 5000, 9000, 13000}` 处执行 5 次纠正，加上桌面 HOME 事件触发，实测一次唤醒可能出现 8～11 条 `launched … (task reuse)`。v4.4 收敛为：
+
+```java
+private static final long[] DELAYS = {4000L};          // 唯一启动点，在 TCL 推 HOME 之后
+private boolean wakeLaunchOnce = false;                // onWake() 里重置
+// launch() 开头：
+if (wakeLaunchOnce) { Log.d(TAG, "wake launch skipped: ..."); return; }
+lastLaunchAt = now;
+wakeLaunchOnce = true;                                 // 消耗本次 wake 唯一的一次启动
 ```
 
-- **为什么用 `TYPE_ACCESSIBILITY_OVERLAY`**：该窗口类型专供无障碍服务，不需要额外运行时授权；清单因此不新增组件、不碰 HOME / LAUNCHER / `<queries>`，TCL 签名门不受影响。
-- **为什么不挡操作**：`NOT_FOCUSABLE` 让右上角弹窗保持焦点，遥控器「右 → 同意」照常；`NOT_TOUCHABLE` 让窗口不接收触摸。真机同屏截图实证两者零重叠，且自动点「拒绝」可成功取消安装。
-- **生命周期**：横幅是纯 UI，和唤醒逻辑完全隔离；`onUnbind()` 会注销 receiver 并移除窗口。覆盖安装会杀掉服务进程，横幅随之消失（用户按「同意」前已看到，符合预期）。
-- **首次升级边界**：v4.2.1 的服务没有该 receiver，`push_apk.py` 检测到已装 `versionCode < 20` 会跳过广播并打印 `TV banner: skipped`，下次推送起正常。
-- **唤醒逻辑零改动**：`launch()` 的任务栈复用、5 次纠正、`quietMyDv()`、自动学习集合与六级组件解析全部保持 v4.2.1 原样。核查命令见 [build-and-push.md](build-and-push.md)。
+同时 `onAccessibilityEvent()` 里 HOME 命中只记日志、**不再调用 `launch()`**（否则会在 4000ms 之前过早启动，被 TCL 随后压下的桌面盖住——这正是 v3.8 回归的根因）。冷开机走独立的 `launchBoot()`，7 次纠正不受 `wakeLaunchOnce` 影响。日志里每次 WAKE 应只有 1 条 `launched … (task reuse)`。
+
+**② 彻底移除 v4.3 的推送横幅。** 删除了服务里的 `PUSH_BANNER` 接收器、`showBanner()` / `hideBanner()`、`TYPE_ACCESSIBILITY_OVERLAY` 窗口及全部相关 import；`push_apk.py` 删除了 `push_banner()` 与 `--banner-only` / `--hide-banner`。TCL 弹窗文案写死在系统资源里，本来就无法显示应用名/版本，版本号现在只在 PC 控制台横幅与 `VERSION CHECK` 显示。
+
+**未改动**：`launch()` 的任务栈复用写法（显式组件 + MAIN/LAUNCHER + `RESET_TASK_IF_NEEDED`、无 `SINGLE_TOP`）、`quietMyDv()`、自动学习集合与六级组件解析、冷启动逻辑。核查命令见 [build-and-push.md](build-and-push.md)。

@@ -86,22 +86,16 @@ adb shell "settings get system wb_exact_resume"
 
 v4.2 自动学习：`python verify_autolearn.py --follow`（只读核查）/`--auto-learn-on` / `--auto-learn-off` / `--exclude "包1,包2"` / `--clear-log` / `--allow-autostart`（可选冷启动授权）。装新应用后**不需要**再跑 `--all-apps`。
 
-## v4.3 推送版本横幅
+## 唤醒启动次数（v4.4 起）
 
 ```bash
-# 只画横幅 / 立即收起（都不安装 APK）
-python push_apk.py --banner-only
-python push_apk.py --hide-banner
-
-# 手动触发（extras 必须全 ASCII，中文提示编译在服务里）
-adb shell "am broadcast -a com.wb.mydvresume.PUSH_BANNER --es tag v4.3 --es vn 3.4 --es vc 20 --ei duration 45"
-adb shell "am broadcast -a com.wb.mydvresume.PUSH_BANNER --ez hide true"
-
-# 核对是否真的画出来（不要用 -t N，会先截断再过滤 tag）
-adb shell "logcat -d -s MyDvResume:V" | grep "banner shown"
+# 每次 WAKE 应只有 1 条 launched（重复事件记 debug: wake launch skipped）
+adb shell "logcat -d -s MyDvResume:V" | grep -E "launched .*task reuse|wake launch skipped|service connected v4.4"
 ```
 
-横幅是 `TYPE_ACCESSIBILITY_OVERLAY`，左下角、`NOT_FOCUSABLE|NOT_TOUCHABLE`，不遮挡右上角的多屏互动弹窗，也不拦截遥控器按键。服务未 Bound 时收不到广播。
+v4.4 把唤醒启动从 5 次纠正收敛为 4000ms 单点 + `wakeLaunchOnce` gate；冷开机（BOOT）仍走独立的 7 次纠正，不受影响。
+
+> **版本显示**：v4.3 曾在电视上画过 `TYPE_ACCESSIBILITY_OVERLAY` 版本横幅，用户已在 v4.4 要求移除。`--banner-only` / `--hide-banner` / `PUSH_BANNER` 广播均已删除，电视端不再显示应用名或版本；版本号只在 PC 控制台可见。不要再恢复横幅。
 
 ## 启动应用（诊断用，注意权限边界）
 

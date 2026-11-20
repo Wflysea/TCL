@@ -21,6 +21,7 @@
 | **v4.2** | **18 / 3.2** | 11-15 20:08 | **自动学习白名单（中间构建）**：清单加 `QUERY_ALL_PACKAGES`；绑定时全量扫描自装应用、`PACKAGE_ADDED/REPLACED/REMOVED` 增量学习并缓存 launcher 组件；`isAllowed()` = 静态白名单 ∪ 运行时自装集合；`resolveBootIntent()` 改为六级组件解析。**v4.0 任务栈复用启动逻辑零改动** | 首次扫描 29 个包、缓存 16 个组件；重绑实测 11 次 `launched rocks.aston.hongguotv (task reuse)`、`myDV=0`、无 fallback；随后发现 29 个含系统更新包，需收紧 |
 | **v4.2.1** | **19 / 3.3** | 11-15 20:12 | 收紧自动学习集合到 `pm list packages -3` 语义（`FLAG_SYSTEM == 0`），不再把 ~13 个 `FLAG_UPDATED_SYSTEM_APP` 系统更新包当作自装应用，避免误拉系统界面；新增只读核查脚本 `verify_autolearn.py` | 设备实测 `userApps=15` 与 `pm -3`（16 个含服务自身、15 个可学习）一致；唤醒回到 `com.cctv.yangshipin.app.androidq` 的 `DetailActivity`，8 次 task reuse、`myDV=0`、无 fallback；设备内 `base.apk` 哈希与本地一致 `4a50c6b6…3ee` |
 | **v4.3** | **20 / 3.4** | 11-15 21:41 | **电视端版本横幅**：TCL 确认框文案写死，改 label / 文件名 / 协议字段 / 系统通知都无效（真机 UI dump 取证）。服务新增动态注册的 `PUSH_BANNER` 广播接收器 + `TYPE_ACCESSIBILITY_OVERLAY` 左下角横幅；`push_apk.py` 在发 `INSTALL` 帧前用 adb 显式广播触发，横幅显示应用名 / `versionName` / `versionCode`。**v4.0 任务栈复用与 v4.2.1 自动学习逻辑零改动**，清单未新增任何组件 / HOME / LAUNCHER / `<queries>` | 同屏截图实证：右上角固定文案弹窗 + 左下角 `myDV Resume v4.3 / versionName 3.4 / versionCode 20` 横幅**零重叠**，自动点「拒绝」成功说明弹窗仍可交互；`userApps=15`、`v3 BOUND`、哈希 `39b03d28…a0a` 与本地一致 |
+| **v4.4** | **21 / 3.5** | 11-20 20:5x | **① 唤醒严格单次启动**：`DELAYS` 从 5 个纠正点收敛为单点 `{4000L}`（放在 TCL 推 HOME 的 2～3s 之后，避免单次启动过早被桌面盖住——这正是 v3.8 回归的教训）；`onAccessibilityEvent` 的 HOME 触发不再 launch；`launch()` 加 `wakeLaunchOnce` 硬 gate，重复事件（poll / rebind / 广播重入）绝不二次启动；冷开机走 `launchBoot()` 不受 gate 影响。**② 彻底移除推送横幅**：删除服务里全部 `TYPE_ACCESSIBILITY_OVERLAY` / `PUSH_BANNER` 接收器 / `showBanner` / `hideBanner` 代码，`push_apk.py` 删除 `push_banner()` 与 `--banner-only` / `--hide-banner`，版本号只在 PC 控制台显示。**v4.0 task-reuse 启动方式、v4.2.1 自动学习零改动** | 构建通过、签名 V1/V2/V3、清单安全（无 HOME/LAUNCHER/queries）；APK 从 29138 B 缩回 25042 B；实测待确认（见下方推送记录） |
 
 ---
 
@@ -114,9 +115,10 @@ launched com.cctv.yangshipin.app.androidq (task reuse) top=...DetailActivity  (x
 | **v4.1** | **`bf40c492…1c5`** | **20946 B** |
 | v4.2（中间构建，成品未归档） | `79cbd45c…e63` | 25042 B |
 | v4.2.1 | `4a50c6b6…3ee` | 25042 B |
-| **v4.3** | **`39b03d28…a0a`** | **29138 B** |
+| v4.3 | `39b03d28…a0a` | 29138 B |
+| **v4.4** | **`710e94d3…c0`** | **25042 B** |
 
-所有版本 V1/V2/V3 签名通过，清单均不含 HOME / LAUNCHER / `<queries>` 声明（否则会触发 TCL 签名门）。v4.2 起新增的 `QUERY_ALL_PACKAGES` 是普通 `<uses-permission>`，v3.9.1 已验证验证器接受。v4.2 之后 APK 变大是因为新增自动学习代码使 `classes.dex` 从 ~24 KB 增至 29840 B，v4.3 再加横幅代码后为 33576 B。
+所有版本 V1/V2/V3 签名通过，清单均不含 HOME / LAUNCHER / `<queries>` 声明（否则会触发 TCL 签名门）。v4.2 起新增的 `QUERY_ALL_PACKAGES` 是普通 `<uses-permission>`，v3.9.1 已验证验证器接受。v4.2 之后 APK 变大是因为新增自动学习代码使 `classes.dex` 从 ~24 KB 增至 29840 B，v4.3 加横幅代码后达 33576 B，v4.4 删除横幅后 `classes.dex` 缩回 29940 B、APK 回到 25042 B。
 
 
 ## 工具侧修复（不改 APK 版本）
@@ -128,3 +130,4 @@ launched com.cctv.yangshipin.app.androidq (task reuse) top=...DetailActivity  (x
 | 2026-11-15 | `scripts/verify_autolearn.py`（新增）、`scripts/push_apk.py` | 新增只读核查脚本：版本 / 无障碍绑定 / 自动学习开关 / 设备自装应用数 / 扫描与学习日志 / 唤醒目标 / fallback 计数；支持 `--auto-learn-on/off`、`--exclude`、`--allow-autostart`（可选冷启动 appops）、`--clear-log`、`--follow`。`push_apk.py` 的 `VERSION` 随 versionCode 同步到 `19`。 |
 | 2026-11-15 | `scripts/push_apk.py` | 从签名 APK 自动读取版本（aapt2 badging → 清单兜底），删除硬编码 `VERSION`；推送前打印含 `versionCode` / `versionName` / sha256 / 设备已装版本的横幅，成功后打印 `VERSION CHECK` before → after；label 拼上版本、下载文件名带版本（字节副本，退出自动删除）。新增 `--info-only`、`--plain-label`。**APK 无改动**。⚠️ 后续 21:12 真机 UI dump 证明 TCL 弹窗文案写死，label / 文件名**都不会显示**，这一轮只解决了 PC 控制台可见性；电视端由 v4.3 横幅真正解决。 |
 | 2026-11-15 | `scripts/push_apk.py`、`apk/src/.../ResumeService.java`、`apk/AndroidManifest.xml` | **v4.3 电视端版本横幅**：脚本在发 `INSTALL` 帧前广播 `com.wb.mydvresume.PUSH_BANNER`（ASCII extras），服务动态注册 receiver 并用 `TYPE_ACCESSIBILITY_OVERLAY` 在左下角画横幅；新增 `--banner-only` / `--hide-banner`；已装 `versionCode < 20` 时跳过广播并提示（首次升级时旧服务无接收器）；logcat 校验改为读完整 tag 过滤缓冲并匹配 `versionCode`（`-t N` 先截断再过滤会误报 `NOT drawn`）。升 `20 / 3.4`，归档 `MyDvResume-vc20.apk`。 |
+| 2026-11-20 | `scripts/push_apk.py` | **v4.4 移除横幅**：删除 `push_banner()`、`BANNER_ACTION`、`--banner-only` / `--hide-banner`，推送前不再发广播、控制台不再打印横幅行；`RELEASE_NAMES` 加 `21: v4.4`。`verify_autolearn.py` 期望版本改 `21 / 3.5`。版本号只在 PC 控制台横幅与 `VERSION CHECK` 显示。 |

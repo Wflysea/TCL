@@ -22,6 +22,7 @@
 - 服务日志实证：`SCREEN_OFF` 记 `DetailActivity` → 唤醒 `WAKE via poll` → `HOME after wake since=568ms / 746ms`，即 TCL **亮屏不到 1 秒就把桌面抢到前台**；服务那时已经不再纠正。
 - 系统 events：`wm_task_to_front [0,2]`（桌面）、`TclActivityTaskManagerService: setBootSource cmpName:com.tcl.cyberui/.MainActivity`、`SourceManager: setBootSourceForApp set E_BOOT_INPUT_STORAGE` ⇒ TCL 唤醒时主动切回桌面/启动源。
 - **结论：那几次「重复启动」不是日志噪音，正是对抗 TCL 延迟压桌面的机制。** v4.0 已恢复 5 次纠正并取消跳过判断（新启动方式幂等，重复不会叠页面）。
+- **v4.4 为什么能安全地只启动 1 次**：v3.8 失败是因为它把唯一的启动留在早期（0.8s 附近），TCL 随后压桌面就盖住了。v4.4 按用户要求收敛为 1 次，但把这一次**挪到 4000ms——晚于 TCL 的 2～3s 压桌面动作**，并用 `wakeLaunchOnce` gate 挡住重复事件。即「次数少」本身不是问题，**启动时机晚于桌面争夺窗口**才是关键。若日后真实遥控器测试出现"停在桌面"，第一反应是把 `DELAYS[0]` 从 4000 调大（如 5000/6000），而不是恢复 5 次。
 
 ## C. 「直接回到播放页」为什么做不到
 
@@ -157,7 +158,7 @@ cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.in
 
 **注意**：这个提示与 v3.5 那次「推送失败」不是同一回事，也不要往「TCL 签名门 / HOME 声明 / 多 URL 重试」方向排查——那些会出现 `stage=4` 或 `stage=2`，而这里下载是 200、进度到 100%、`PACKAGE_ADDED` 已发出。
 
-## 症状：推送到电视时看不到应用名称和版本号（v4.3 已修）
+## 症状：推送到电视时看不到应用名称和版本号（无法解决，v4.4 起只在 PC 显示）
 
 **现象**：PC 控制台能看到版本，电视上却只有「多屏互动 / 1 正在发起应用推送，同意后将接收应用并进行安装 / 拒绝 / 同意」，没有应用名、没有版本号。
 
@@ -172,17 +173,4 @@ cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.in
 | `cmd statusbar expand-notifications` | 电视不渲染通知面板 |
 | `APPLICATION_DETAILS_SETTINGS` | 该系统 Activity 不存在 |
 
-**结论**：协议字段、系统通知都改不动这个弹窗，别再试。**v4.3 的解法**是另画一层 UI —— `push_apk.py` 在发 `INSTALL` 帧前广播 `PUSH_BANNER`，无障碍服务用 `TYPE_ACCESSIBILITY_OVERLAY` 在左下角显示应用名 + `versionName` + `versionCode`，45 秒后自动消失；弹窗在右上角，两者零重叠，遥控器按键不受影响。详见 [build-and-push.md 版本显示章节](build-and-push.md) 与 [architecture.md 第 11 节](architecture.md)。
-
-**若横幅没出现，按顺序查**：
-
-```bash
-adb shell dumpsys accessibility | grep -A3 "Bound services"     # 服务必须 Bound
-adb shell logcat -d -s MyDvResume:V | grep "banner shown"       # 是否收到广播并绘制
-python push_apk.py --banner-only                                # 只画横幅、不安装
-```
-
-- 推送脚本打印 `TV banner: skipped` → 电视上还是 v4.2.1（旧服务无 receiver），**下一次**推送才生效；
-- 打印 `NOT confirmed in logcat` → 查无障碍绑定，或 `am broadcast` 是否被系统拦下；
-- 日志校验不要用 `logcat -t N -s TAG`（先按行数截断再过滤 tag，会漏掉横幅日志）；
-- `--hide-banner` 可立即收起横幅。
+**结论**：协议字段、系统通知都改不动这个弹窗，别再试。v4.3 曾用 `TYPE_ACCESSIBILITY_OVERLAY` 在左下角画横幅绕过（同屏截图证实与弹窗零重叠），但用户已在 **v4.4 要求彻底移除横幅**——`PUSH_BANNER` 广播、`--banner-only` / `--hide-banner` 与服务里的横幅代码都已删除。**现在版本号只在 PC 控制台的推送横幅与 `VERSION CHECK` 可见，电视端不会再显示，也不要再恢复横幅。**

@@ -16,23 +16,14 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.graphics.Color;
-import android.graphics.PixelFormat;
-import android.graphics.drawable.GradientDrawable;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
-import android.util.TypedValue;
-import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.View;
-import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
-import android.widget.TextView;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
@@ -78,19 +69,17 @@ import java.util.List;
  * intended/foreground app, so the verified myDV resume is unaffected.
  * Configurable via Settings.System "wb_quiet_mydv" (0/off disables).
  *
- * v4.3: ON-TV PUSH BANNER. The TCL 多屏互动 confirm dialog has FIXED text
- * (uiautomator dump on 2026-11-15: tv_title="多屏互动", tv_content is a
- * hardcoded sentence, only two buttons + an icon). It renders NEITHER the
- * tcast INSTALL frame's label/versionCode NOR a shell notification nor the
- * expanded notification panel. So push_apk.py now sends an explicit broadcast
- * just BEFORE the INSTALL frame, and this service draws a
- * TYPE_ACCESSIBILITY_OVERLAY banner in the bottom-left corner -- the dialog
- * sits at [1386,32][1890,336], so there is no overlap. The window is
- * NOT_FOCUSABLE|NOT_TOUCHABLE, so remote keys still reach 同意. It auto-hides
- * after 30s or on an explicit hide broadcast. Only ASCII extras cross adb;
- * the Chinese hint line is compiled into the service. NO manifest receiver,
- * HOME, LAUNCHER or <queries> was added (TCL signature gate untouched), and
- * the v4.0 task-reuse launch + v4.2.1 auto-learning logic are unchanged.
+ * v4.4: STRICT SINGLE LAUNCH + NO OVERLAY. Per user request the wake path now
+ * performs exactly ONE startActivity per wake, scheduled at 4000ms -- AFTER
+ * TCL's HOME push (~2-3s after SCREEN_ON) -- and guarded by a `wakeLaunchOnce`
+ * gate. v4.0 used 5 idempotent corrections to beat that late HOME; with only
+ * one shot the start must be late enough, or the freshly resumed task is
+ * covered by HOME again (this was the v3.8 regression). The v4.3
+ * TYPE_ACCESSIBILITY_OVERLAY version banner and its PUSH_BANNER receiver are
+ * REMOVED entirely: the TCL confirm dialog cannot show app name/version anyway
+ * and the user no longer wants the overlay. The v4.0 task-reuse launch itself
+ * (explicit component + MAIN/LAUNCHER + RESET_TASK_IF_NEEDED, no SINGLE_TOP)
+ * and the v4.2.1 auto-learning are UNCHANGED. versionCode 21 / versionName 3.5.
  *
  * v4.2.1: tighten the learned set to `pm list packages -3` semantics
  * (FLAG_SYSTEM == 0). v4.2 also counted FLAG_UPDATED_SYSTEM_APP and saw 29
@@ -193,20 +182,6 @@ public class ResumeService extends AccessibilityService {
             "android"
     };
 
-    // ---- v4.3: on-TV push banner -----------------------------------------
-    /** Explicit broadcast from push_apk.py, sent just before the INSTALL frame. */
-    private static final String BANNER_ACTION = "com.wb.mydvresume.PUSH_BANNER";
-    private static final String EXTRA_HIDE = "hide";
-    private static final String EXTRA_APP = "app";
-    private static final String EXTRA_TAG = "tag";
-    private static final String EXTRA_VN = "vn";
-    private static final String EXTRA_VC = "vc";
-    private static final String EXTRA_NOTE = "note";
-    private static final String EXTRA_DURATION = "duration";
-    private static final int BANNER_DEFAULT_SECONDS = 30;
-    /** Compiled in: avoids pushing non-ASCII text through adb shell. */
-    private static final String BANNER_HINT = "正在推送安装 · 请在弹窗按「右 → 同意」";
-
     private static final String DEFAULT_BOOT_TARGET = "com.github.mytv.dv";
     private static final String[] DEFAULT_WHITELIST = {
             "com.github.mytv.dv",
@@ -247,7 +222,9 @@ public class ResumeService extends AccessibilityService {
     private static final long WAKE_WINDOW_MS = 15000L;
     private static final long WAKE_DEBOUNCE_MS = 8000L;
     private static final long LAUNCH_DEBOUNCE_MS = 1200L;
-    private static final long[] DELAYS = {800L, 2500L, 5000L, 9000L, 13000L};
+    // v4.4: exactly ONE correction launch, placed AFTER TCL's HOME push
+    // (~2-3s after SCREEN_ON) so the single start is not covered by the desktop.
+    private static final long[] DELAYS = {4000L};
 
     private static final long BOOT_WINDOW_MS = 120000L;
     private static final long[] BOOT_DELAYS = {
@@ -264,6 +241,8 @@ public class ResumeService extends AccessibilityService {
     private String wakeTarget = TARGET;
     private String wakeClass = "";
     private boolean wakeLaunched = false;
+    // v4.4: hard gate -- at most one real startActivity per wake session.
+    private boolean wakeLaunchOnce = false;
     private String lastClass = "";
 
     private long bootAt = 0L;
@@ -283,16 +262,6 @@ public class ResumeService extends AccessibilityService {
     private long cachedStaticAllowAt = 0L;
     private String cachedExclude = null;
     private long cachedExcludeAt = 0L;
-
-    // v4.3: overlay banner state, main-thread only.
-    private boolean bannerReceiverRegistered = false;
-    private View bannerView = null;
-    private final Runnable bannerHide = new Runnable() {
-        @Override
-        public void run() {
-            hideBanner();
-        }
-    };
 
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
         @Override
@@ -337,28 +306,6 @@ public class ResumeService extends AccessibilityService {
         }
     };
 
-    /** v4.3: explicit broadcast from push_apk.py. Dynamically registered, so
-     *  the manifest gains NO intent-filter / HOME / LAUNCHER / <queries> and
-     *  the TCL signature gate is untouched. */
-    private final BroadcastReceiver bannerReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context c, Intent i) {
-            if (i == null) {
-                return;
-            }
-            if (i.getBooleanExtra(EXTRA_HIDE, false)) {
-                hideBanner();
-                return;
-            }
-            showBanner(i.getStringExtra(EXTRA_APP),
-                    i.getStringExtra(EXTRA_TAG),
-                    i.getStringExtra(EXTRA_VN),
-                    i.getStringExtra(EXTRA_VC),
-                    i.getStringExtra(EXTRA_NOTE),
-                    i.getIntExtra(EXTRA_DURATION, BANNER_DEFAULT_SECONDS));
-        }
-    };
-
     @Override
     public void onServiceConnected() {
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
@@ -386,10 +333,6 @@ public class ResumeService extends AccessibilityService {
             pf.addDataScheme("package");
             registerReceiver(packageReceiver, pf);
             packageReceiverRegistered = true;
-        }
-        if (!bannerReceiverRegistered) {
-            registerReceiver(bannerReceiver, new IntentFilter(BANNER_ACTION));
-            bannerReceiverRegistered = true;
         }
 
         // v4.2: full scan at every bind. Covers apps installed while the
@@ -420,7 +363,7 @@ public class ResumeService extends AccessibilityService {
         lastInteractive = true;
         handler.postDelayed(pollRunnable, POLL_MS);
 
-        Log.i(TAG, "service connected v4.3 (auto-learn + push banner), userApps="
+        Log.i(TAG, "service connected v4.4 (auto-learn, single wake launch), userApps="
                 + dynamicAllow.size() + ", prevBindGap="
                 + (prevBind > 0L ? (now - prevBind) : 0L)
                 + "ms, bootId=" + (curBoot.length() > 0 ? curBoot.substring(0, 8) : "n/a")
@@ -477,11 +420,13 @@ public class ResumeService extends AccessibilityService {
             }
         }
 
-        // Standby path: bring the remembered app back when HOME covers it.
+        // v4.4: HOME events are no longer a launch trigger. With a single
+        // scheduled start we must NOT fire early here -- TCL pushes HOME
+        // ~2-3s after SCREEN_ON and a start before that gets covered again.
+        // The one launch at DELAYS[0]=4000ms already runs after HOME.
         long since = wokeAt > 0L ? SystemClock.elapsedRealtime() - wokeAt : Long.MAX_VALUE;
         if (HOME.equals(pkg) && since >= 0L && since < WAKE_WINDOW_MS) {
-            Log.i(TAG, "HOME after wake (event), since=" + since + "ms");
-            launch();
+            Log.i(TAG, "HOME after wake (event, no launch), since=" + since + "ms");
         }
     }
 
@@ -510,6 +455,7 @@ public class ResumeService extends AccessibilityService {
         }
         wokeAt = now;
         wakeLaunched = false;
+        wakeLaunchOnce = false;  // v4.4: allow exactly one launch this wake
         if (dynamicAllow.isEmpty()) {
             refreshInstalledApps("wake");
         }
@@ -585,23 +531,31 @@ public class ResumeService extends AccessibilityService {
             launchBoot(bootSeq);
             return;
         }
+        // v4.4: hard gate -- exactly one real launch per wake session. The
+        // single scheduled start at DELAYS[0]=4000ms consumes it; any stray
+        // re-entry (poll / rebind / duplicate broadcast) is a no-op. Boot uses
+        // launchBoot() above and is deliberately NOT affected by this gate.
+        if (wakeLaunchOnce) {
+            Log.d(TAG, "wake launch skipped: already launched once (seq="
+                    + wakeSeq + ")");
+            return;
+        }
         if (now - lastLaunchAt < LAUNCH_DEBOUNCE_MS) {
             return;
         }
         lastLaunchAt = now;
+        wakeLaunchOnce = true;  // consume the one allowed launch for this wake
 
         // v3.5: keep myDV's background audio out while another app is resumed.
         quietMyDv("wake launch", wakeTarget);
 
         String pkg = (wakeTarget.length() > 0) ? wakeTarget : TARGET;
 
-        // v4.0: keep ALL scheduled correction starts. A task-reuse start is
-        // idempotent (it only brings the existing task forward; it never
-        // creates a new Activity), so repeating it is harmless -- and it is
-        // exactly what beats TCL pushing HOME 2-3s AFTER SCREEN_ON. v3.8
-        // skipped the later corrections and the TV stayed on the home page.
+        // v4.4: exactly one scheduled start (4000ms, after TCL's HOME push).
+        // The launch intent and flags below are still the v4.0 task-reuse path
+        // that the user verified -- only the NUMBER of starts changed.
         if (wakeLaunched && isPkgForeground(pkg)) {
-            Log.i(TAG, "repeat correction, " + pkg + " already in front");
+            Log.i(TAG, "single launch, " + pkg + " in front");
         }
         wakeLaunched = true;
 
@@ -1380,89 +1334,6 @@ public class ResumeService extends AccessibilityService {
         }
     }
 
-    // ---------------- v4.3: on-TV push banner ----------------------------
-
-    /**
-     * Draw the version banner. TYPE_ACCESSIBILITY_OVERLAY is reserved for
-     * accessibility services, so no extra runtime permission is needed.
-     * NOT_FOCUSABLE|NOT_TOUCHABLE keeps the TCL 多屏互动 dialog in focus:
-     * remote keys (Right -> 同意 -> OK) still reach it normally.
-     */
-    private void showBanner(String app, String tag, String vn, String vc,
-                            String note, int seconds) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) {
-            Log.w(TAG, "banner unsupported on API " + Build.VERSION.SDK_INT);
-            return;
-        }
-        String name = (app == null || app.length() == 0) ? "myDV Resume" : app;
-        String release = (tag == null) ? "" : tag.trim();
-        String version = (vn == null || vn.length() == 0) ? "?" : vn;
-        String code = (vc == null || vc.length() == 0) ? "?" : vc;
-        String hint = (note == null || note.length() == 0) ? BANNER_HINT : note;
-        String text = name + (release.length() > 0 ? "   " + release : "")
-                + "\nversionName " + version + "   |   versionCode " + code
-                + "\n" + hint;
-        try {
-            WindowManager wm = (WindowManager)
-                    getSystemService(Context.WINDOW_SERVICE);
-            if (wm == null) {
-                return;
-            }
-            hideBanner();  // replace any previous banner and cancel its timer
-
-            TextView tv = new TextView(this);
-            tv.setText(text);
-            tv.setTextColor(Color.WHITE);
-            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
-            tv.setLineSpacing(8f, 1f);
-            tv.setPadding(28, 18, 28, 18);
-            GradientDrawable bg = new GradientDrawable();
-            bg.setColor(0xE6111826);
-            bg.setCornerRadius(18f);
-            bg.setStroke(2, 0xFF4FC3F7);
-            tv.setBackground(bg);
-
-            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                    PixelFormat.TRANSLUCENT);
-            lp.gravity = Gravity.BOTTOM | Gravity.LEFT;
-            lp.x = 48;
-            lp.y = 48;
-            wm.addView(tv, lp);
-            bannerView = tv;
-            int secs = (seconds > 0 && seconds <= 300)
-                    ? seconds : BANNER_DEFAULT_SECONDS;
-            handler.postDelayed(bannerHide, secs * 1000L);
-            Log.i(TAG, "banner shown (" + secs + "s): "
-                    + text.replace("\n", " | "));
-        } catch (Throwable t) {
-            Log.w(TAG, "banner failed: " + t);
-            bannerView = null;
-        }
-    }
-
-    private void hideBanner() {
-        handler.removeCallbacks(bannerHide);
-        if (bannerView == null) {
-            return;
-        }
-        try {
-            WindowManager wm = (WindowManager)
-                    getSystemService(Context.WINDOW_SERVICE);
-            if (wm != null) {
-                wm.removeView(bannerView);
-            }
-        } catch (Throwable ignored) {
-        }
-        bannerView = null;
-    }
-
     @Override
     public void onInterrupt() {
     }
@@ -1484,14 +1355,6 @@ public class ResumeService extends AccessibilityService {
             }
             packageReceiverRegistered = false;
         }
-        if (bannerReceiverRegistered) {
-            try {
-                unregisterReceiver(bannerReceiver);
-            } catch (Throwable ignored) {
-            }
-            bannerReceiverRegistered = false;
-        }
-        hideBanner();
         return super.onUnbind(intent);
     }
 }

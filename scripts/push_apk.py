@@ -6,30 +6,25 @@ Starts a local HTTP server for the TV to download the APK, sets up adb reverse,
 then speaks the tcast INSTALL protocol. The TV shows a prompt; the user must
 choose 同意 (press Right once, then OK).
 
-Version visibility (v4.3, 2026-11-15): the TCL 多屏互动 confirm dialog is
-HARDCODED. A uiautomator dump proved it has only tv_title="多屏互动", a fixed
-tv_content sentence, two buttons and an icon: it renders neither the tcast
-INSTALL frame's label/versionCode nor the download filename. Shell
-notifications and the expanded notification panel are not visible on this TV
-either. So v4.3 draws the version itself:
+Version visibility (v4.4, 2026-11-20): the TCL 多屏互动 confirm dialog is
+HARDCODED (only tv_title="多屏互动", a fixed tv_content sentence, two buttons
+and an icon) and renders NO app name / version. v4.3 added an on-TV overlay
+banner, but the user asked to remove it, so v4.4 keeps version info ONLY on
+this PC console:
 
-  1. console banner BEFORE pushing (local APK version, sha256, size, TV
-     installed version) and a VERSION CHECK after installation,
-  2. an ON-TV banner drawn by ResumeService with TYPE_ACCESSIBILITY_OVERLAY.
-     This script sends an explicit broadcast just before the INSTALL frame;
-     the service shows "myDV Resume v4.3 / versionName 3.4 / versionCode 20"
-     in the bottom-left corner (the dialog is at [1386,32][1890,336]).
-     The overlay is NOT_FOCUSABLE|NOT_TOUCHABLE, so remote keys still work.
+  - console banner BEFORE pushing (local APK version, sha256, size, TV
+    installed version) and a VERSION CHECK after installation.
+
+The on-TV TYPE_ACCESSIBILITY_OVERLAY banner and its PUSH_BANNER broadcast were
+REMOVED from both this script and ResumeService in v4.4.
 
 versionCode / versionName are read straight from the APK (aapt2 badging, with
 AndroidManifest.xml as fallback); no hardcoded VERSION constant, so the pushed
 version can never drift from the built APK.
 
 Usage:
-    python push_apk.py                  # push; TV banner + console show version
+    python push_apk.py                  # push; console shows version
     python push_apk.py --info-only      # just print local + TV versions, no push
-    python push_apk.py --banner-only    # show the TV banner, do NOT install
-    python push_apk.py --hide-banner    # remove the TV banner immediately
     python push_apk.py --plain-label    # keep the bare app name in the protocol
 
 Prints a state log; exits 0 when the TV reports the app installed.
@@ -55,8 +50,7 @@ PKG = "com.wb.mydvresume"
 LABEL_BASE = "myDV Resume"
 # Display-only: maps versionCode -> release tag used in the changelog. Not used
 # for any protocol field; unknown codes simply omit the tag.
-RELEASE_NAMES = {17: "v4.1", 18: "v4.2", 19: "v4.2.1", 20: "v4.3"}
-BANNER_ACTION = "com.wb.mydvresume.PUSH_BANNER"
+RELEASE_NAMES = {17: "v4.1", 18: "v4.2", 19: "v4.2.1", 20: "v4.3", 21: "v4.4"}
 APK_NAME = "MyDvResume.apk"
 APK_DIR = r"C:\Temp\wbapk"
 AAPT2 = os.path.join(APK_DIR, "tools", "aapt2.exe")
@@ -130,7 +124,8 @@ def device_version():
 
 def tv_label(vc, vn, plain=False):
     """Label carried in the tcast INSTALL frame. TCL's dialog does NOT render
-    it (its text is fixed); v4.3 shows the version via the overlay banner."""
+    it (its text is fixed); the version is shown only on the PC console.
+    Kept for the protocol record / diagnostics."""
     if plain:
         return LABEL_BASE
     tag = RELEASE_NAMES.get(int(vc)) if vc.isdigit() else None
@@ -155,46 +150,6 @@ def report_after(before):
     if after[0] == "?":
         print("  (TV did not answer dumpsys; verify manually)", flush=True)
     return after
-
-
-def push_banner(vc, vn, tag, hide=False, duration=45, tv_vc="?"):
-    """v4.3: ask ResumeService to draw / remove the TYPE_ACCESSIBILITY_OVERLAY
-    version banner. Extras are ASCII-only on purpose: adb shell re-splits
-    arguments on spaces, so the Chinese hint line lives inside the service."""
-    # The very first v4.3 push goes to a TV still running v4.2.1, whose
-    # service has no banner receiver yet. Do not report that as a failure.
-    if not hide and tv_vc.isdigit() and int(tv_vc) < 20:
-        print("  TV banner: skipped (installed vc%s has no banner receiver; "
-              "it will show from the NEXT push)" % tv_vc, flush=True)
-        return
-    adb("connect", TV + ":5555")
-    cmd = ["-s", TV + ":5555", "shell", "am", "broadcast", "-a", BANNER_ACTION]
-    if hide:
-        cmd += ["--ez", "hide", "true"]
-    else:
-        cmd += ["--es", "vn", vn, "--es", "vc", vc,
-                "--ei", "duration", str(duration)]
-        if tag:
-            cmd += ["--es", "tag", tag]
-    out = adb(*cmd)
-    print("  banner broadcast: %s"
-          % (out.splitlines()[-1] if out else "(no output)"), flush=True)
-    if hide:
-        return
-    # Give the service a moment to add the window, then confirm from logcat.
-    time.sleep(1.2)
-    # "logcat -d -t N -s TAG" takes the last N lines of ALL tags first and
-    # filters afterwards, which drops the banner line on a busy TV. Read the
-    # tag-filtered buffer in full, then match this exact versionCode.
-    log = adb("-s", TV + ":5555", "logcat", "-d", "-s", "MyDvResume:V")
-    lines = [l.strip() for l in log.splitlines()
-             if "banner shown" in l and ("versionCode " + vc) in l]
-    if lines:
-        print("  TV banner: DRAWN (logcat banner shown, versionCode %s)" % vc,
-              flush=True)
-    else:
-        print("  TV banner: NOT confirmed in logcat "
-              "(is the accessibility service bound?)", flush=True)
 
 
 def local_ip():
@@ -277,10 +232,6 @@ def main():
                     help="print local + installed versions, do not push")
     ap.add_argument("--plain-label", action="store_true",
                     help="do not append the version to the TV dialog label")
-    ap.add_argument("--banner-only", action="store_true",
-                    help="show the on-TV version banner, do not push the APK")
-    ap.add_argument("--hide-banner", action="store_true",
-                    help="remove the on-TV version banner immediately")
     args = ap.parse_args()
 
     apk = os.path.join(APK_DIR, APK_NAME)
@@ -301,17 +252,8 @@ def main():
     print("  APK           : %s (%d bytes)" % (apk, size), flush=True)
     print("  sha256        : %s" % digest, flush=True)
     print("  TV protocol   : %s (TCL dialog text is fixed)" % label, flush=True)
-    print("  TV banner     : %s %s | versionName %s | versionCode %s"
-          % (LABEL_BASE, tag or "", vn, vc), flush=True)
     print("============================================================", flush=True)
 
-    if args.hide_banner:
-        push_banner(vc, vn, tag, hide=True)
-        return 0
-    if args.banner_only:
-        push_banner(vc, vn, tag, tv_vc=device_version()[0])
-        print("  (banner-only: no APK was sent to the TV)", flush=True)
-        return 0
     if args.info_only:
         before = device_version()
         print("  TV installed  : versionCode=%s versionName=%s" % before, flush=True)
@@ -342,11 +284,6 @@ def main():
     print("adb connect:", adb("connect", TV + ":5555").splitlines()[-1], flush=True)
     print("adb reverse:", adb("reverse", "tcp:%d" % HTTP_PORT, "tcp:%d" % HTTP_PORT) or "(ok)", flush=True)
 
-    # v4.3: draw the version banner BEFORE the TV shows its fixed-text dialog,
-    # so the app name + version are visible while the user presses 同意.
-    push_banner(vc, vn, tag, tv_vc=before[0])
-    time.sleep(0.5)
-
     urls = [
         "http://127.0.0.1:%d/%s" % (HTTP_PORT, name),    # via adb reverse
         "http://%s:%d/%s" % (ip, HTTP_PORT, name),        # direct LAN fallback
@@ -374,8 +311,6 @@ def main():
                               size_mb, "", "", "", path_md5]))
         print("  INSTALL frame: label=%r versionCode=%s sizeMB=%s"
               % (label, vc, size_mb), flush=True)
-        print("  >>> 电视左下角横幅: %s %s / versionName %s / versionCode %s <<<"
-              % (LABEL_BASE, tag or "", vn, vc), flush=True)
         print("  INSTALL request sent; waiting for 同意 on the TV...", flush=True)
 
         buf = b""

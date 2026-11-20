@@ -20,9 +20,9 @@
 
 - `C:\Temp\wbapk\AndroidManifest.xml` → `android:versionCode` / `android:versionName`
 
-`scripts/push_apk.py` **不再有硬编码的 `VERSION`**（2026-11-15 起）：脚本用 `aapt2 dump badging` 直接从签名 APK 读取 `versionCode` / `versionName`（工具链缺失时回退读清单），协议帧、控制台横幅、**电视横幅广播**、下载文件名全部取自同一份数据，不会再出现「改了清单忘了改脚本」导致推送版本显示错误。
+`scripts/push_apk.py` **不再有硬编码的 `VERSION`**（2026-11-15 起）：脚本用 `aapt2 dump badging` 直接从签名 APK 读取 `versionCode` / `versionName`（工具链缺失时回退读清单），协议帧、控制台横幅、下载文件名全部取自同一份数据，不会再出现「改了清单忘了改脚本」导致推送版本显示错误。
 
-可选：`push_apk.py` 里的 `RELEASE_NAMES` 字典把 `versionCode` 映射成 `v4.3` 这类发布名，仅用于显示，不参与协议字段。
+可选：`push_apk.py` 里的 `RELEASE_NAMES` 字典把 `versionCode` 映射成 `v4.4` 这类发布名，仅用于显示，不参与协议字段。
 
 再改源码（`ResumeService.java`）和日志标记 `service connected vX.Y`，方便从 logcat 判断设备上跑的是哪一版。
 
@@ -47,29 +47,23 @@ sha256sum MyDvResume.apk                                     # 记录指纹
 
 ```bash
 cd E:\WorkBuddy\闲聊\_tmp\tcl75v8l_backup
-python push_apk.py                 # 推送；PC 控制台 + 电视左下角横幅都显示版本
+python push_apk.py                 # 推送；版本号在 PC 控制台显示
 python push_apk.py --info-only     # 只查本地 APK 和电视已装版本，不推送
-python push_apk.py --banner-only   # 只在电视上显示版本横幅，不推送 APK
-python push_apk.py --hide-banner   # 立即收起横幅
 python push_apk.py --plain-label   # tcast 帧恢复原始应用名（只影响协议记录）
 ```
 
-**版本显示（v4.3 / 2026-11-15 21:42 同屏截图实证）**：
+**版本显示（v4.4 / 2026-11-20 起）**：版本号**只在 PC 控制台可见**。
 
 | 位置 | 示例 | 可见？ |
 | --- | --- | --- |
-| 推送前控制台横幅 | `PUSHING myDV Resume v4.3` / `versionCode: 20` / `versionName: 3.4` / sha256 / 电视已装版本 | ✅ PC |
-| 安装后 `=== VERSION CHECK ===` | `before 19/3.3 → after 20/3.4` | ✅ PC |
-| **无障碍服务电视横幅** | `myDV Resume v4.3` / `versionName 3.4 \| versionCode 20` / `正在推送安装 · 请在弹窗按「右 → 同意」` | ✅ **电视** |
-| tcast `INSTALL` 帧的 label | `myDV Resume 3.4 / vc20 (v4.3)` | ❌ |
-| 下载文件名 | `MyDvResume-v3.4-vc20.apk` | ❌ |
+| 推送前控制台横幅 | `PUSHING myDV Resume v4.4` / `versionCode: 21` / `versionName: 3.5` / sha256 / 电视已装版本 | ✅ PC |
+| 安装后 `=== VERSION CHECK ===` | `before 20/3.4 → after 21/3.5` | ✅ PC |
+| tcast `INSTALL` 帧的 label | `myDV Resume 3.5 / vc21 (v4.4)` | ❌ |
+| 下载文件名 | `MyDvResume-v3.5-vc21.apk` | ❌ |
 
-**为什么必须自己画一层 UI**：`com.tcl.MultiScreenInteraction_TV` 的确认框是**固定布局 + 固定文案**。UI dump 里只有 `iv_icon`、`tv_title`（「多屏互动」）、`tv_content`（「1 正在发起应用推送，同意后将接收应用并进行安装」）、`btn_negative`（拒绝）、`btn_positive`（同意）——**没有任何应用名 / 版本控件**。实测把 `sizeMB` 字段换成任意文本，`tv_content` 都不变；`cmd notification post` 的通知 importance 仅 3（DEFAULT），`statusbar expand-notifications` 在电视上也不渲染。**改 label、改文件名、改协议字段、发系统通知都无效，不要再试。**
+**为什么电视上看不到应用名和版本（不要再试这些）**：`com.tcl.MultiScreenInteraction_TV` 的确认框是**固定布局 + 固定文案**。UI dump 里只有 `iv_icon`、`tv_title`（「多屏互动」）、`tv_content`（「1 正在发起应用推送，同意后将接收应用并进行安装」）、`btn_negative`（拒绝）、`btn_positive`（同意）——**没有任何应用名 / 版本控件**。实测把 `sizeMB` 字段换成任意文本，`tv_content` 都不变；`cmd notification post` 的通知 importance 仅 3（DEFAULT），`statusbar expand-notifications` 在电视上也不渲染。**改 label、改文件名、改协议字段、发系统通知都无效。**
 
-**v4.3 的解法**：`push_apk.py` 在发 `INSTALL` 帧前发一条显式广播 `com.wb.mydvresume.PUSH_BANNER`（extras 只带 ASCII 的 `tag` / `vn` / `vc` / `duration`，中文提示编译在服务里，避开 adb shell 的参数拆分与编码问题）。`ResumeService` 动态注册该 receiver，用 `TYPE_ACCESSIBILITY_OVERLAY` 在左下角画一个 `NOT_FOCUSABLE | NOT_TOUCHABLE` 的 TextView，45 秒后或收到 `hide=true` 时自动移除；弹窗在右上角 `[1386,32][1890,336]`，两者零重叠，遥控器按键仍走弹窗。服务 Bound 时才收得到广播，所以**首次从 v4.2.1 升到 v4.3 的那次推送会打印 `TV banner: skipped`，从下一次推送起正常显示**。
-
-- 横幅日志可用 `adb shell logcat -d -s MyDvResume:V | grep "banner shown"` 核对；脚本会自动做这项校验并打印 `DRAWN`。注意 `logcat -d -t 30 -s TAG` 是「先取最后 30 行再过滤 tag」，会漏掉横幅日志，不要用 `-t`。
-- 单独验证横幅与弹窗同屏而不安装：发一次 `INSTALL` 帧、在 `confirm_pending` 时截图、自动点「拒绝」，本机探测脚本 `_tmp/probe_banner_dialog.py`（不入库）。
+**v4.3 曾画过一层 `TYPE_ACCESSIBILITY_OVERLAY` 横幅**（左下角显示应用名 + 版本，与右上角弹窗零重叠），但用户 v4.4 要求移除，因此 `--banner-only` / `--hide-banner` / `PUSH_BANNER` 广播与服务的横幅代码已全部删除。这一段历史只作记录，**不要再恢复**。
 
 - 走 **6553 tcast / `com.tcl.MultiScreenInteraction_TV`** 多屏互动，不是 `adb install`。
 - **电视端会弹安装确认：按「右」选中「同意」再按确认。**
@@ -97,7 +91,7 @@ python finalize_resume.py
 - 恢复电池白名单；
 - 确认 `wb_boot_target` / `wb_quiet_mydv` / `wb_exact_resume` / 白名单仍在。
 
-重绑本身会触发一次**伪唤醒**（日志里能看到 5 次纠正），这是正常的，不等于真实待机唤醒测试。
+重绑本身会触发一次**伪唤醒**（v4.4 起日志里只有 1 条 `launched … (task reuse)`），这是正常的，不等于真实待机唤醒测试。真实的暂停 → 待机 → 唤醒仍需用遥控器验证。
 
 ## 5. 完整核查清单
 
@@ -121,11 +115,11 @@ python boot_target.py --wake-report
 python verify_quiet.py --report
 ```
 
-v4.0 应看到连续多次 `launched ... (task reuse)`、`legacy fallback=0`、`SecurityException=0`。
+v4.4 起每次 WAKE **只应有 1 条** `launched ... (task reuse)`（多出来的会被 `wake launch skipped: already launched once` 记成 debug）；`legacy fallback=0`、`SecurityException=0`。若发现一个 WAKE 有多条 launched，说明 gate 失效，检查是否还有别处直接调 `startActivity`。
 
-v4.1 起还应确认 `WAKE via ... target=` 与**待机前正在用的应用**一致，`launched` 的包名相同；若仍是 `com.github.mytv.dv`，查 `WAKE candidate=... intent=null` 和组件解析是否覆盖该包。
+`WAKE via ... target=` 应与**待机前正在用的应用**一致，`launched` 的包名相同；若仍是 `com.github.mytv.dv`，查 `WAKE candidate=... intent=null` 和组件解析是否覆盖该包。
 
-v4.2 起跑 `python verify_autolearn.py --follow`：确认 `versionCode=19`、服务 Bound、`auto-learn scan (bind): 15 user apps`（与 `pm list packages -3` 一致）、`no launchable component / legacy fallback = 0`。装了新应用后应出现 `auto-learn PACKAGE_ADDED: <包名> component=...`；用户做一次真实「暂停 → 待机 → 唤醒」后应出现 `WAKE target from standby record=<新包名>` 与对应的 `launched ... (task reuse)`。
+跑 `python verify_autolearn.py --follow`：确认 `versionCode=21`、服务 Bound、`auto-learn scan (bind): 15 user apps`（与 `pm list packages -3` 一致）、`no launchable component / legacy fallback = 0`。装了新应用后应出现 `auto-learn PACKAGE_ADDED: <包名> component=...`；用户做一次真实「暂停 → 待机 → 唤醒」后应出现 `WAKE target from standby record=<新包名>` 与对应的 `launched ... (task reuse)`。
 
 ## 6. 真实待机唤醒测试（必须人工）
 
@@ -150,7 +144,7 @@ python restore_tcl.py --all     # 全部还原
 
 ```bash
 cd E:\WorkBuddy\闲聊\TCL
-python scripts/sync_and_push.py --message "v4.3 on-TV push version banner"
+python scripts/sync_and_push.py --message "v4.4 single wake launch, remove TV banner"
 ```
 
 脚本会自动归档新 APK、更新源码/脚本快照、记录版本日志并 push 到 `main`。

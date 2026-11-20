@@ -82,7 +82,15 @@ def main():
     time.sleep(3)
 
     dump = sh("dumpsys", "accessibility")
-    ok = "myDV Resume" in dump and "Bound services" in dump
+    # Judge by the stable component name in the enabled list, not by the app
+    # label (which changed myDV Resume -> Resume in v4.5 and broke the old
+    # label-based check). Also require an actual "Bound services" entry for
+    # our service: dumpsys shows bound services by label, so accept either
+    # the current label "Resume" or the legacy "myDV Resume".
+    enabled_ok = SVC in dump
+    bound_ok = ("Bound services" in dump
+                and ("label=Resume" in dump or "label=myDV Resume" in dump))
+    ok = enabled_ok and bound_ok
     print("  Bound:", [l.strip()[:180] for l in dump.splitlines()
                        if "Bound services" in l])
     print("=== service log ===")

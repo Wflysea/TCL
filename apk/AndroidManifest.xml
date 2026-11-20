@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.wb.mydvresume"
-    android:versionCode="21"
-    android:versionName="3.5">
+    android:versionCode="22"
+    android:versionName="3.6">
 
-    <!-- v4.4: 唤醒严格单次启动（4000ms，避开 TCL 推 HOME）；v4.3 推送横幅
-         已彻底移除。清单不新增任何组件 / HOME / LAUNCHER / queries，
+    <!-- v4.5: 应用显示名 myDV Resume -> Resume（android:label + strings.xml
+         app_name）；功能逻辑不变。v4.4 唤醒严格单次启动（4000ms，避开 TCL
+         推 HOME）保持。清单不新增任何组件 / HOME / LAUNCHER / queries，
          因此不触碰 TCL 安装签名门。 -->
 
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30" />
@@ -23,7 +24,7 @@
          TCL 验证器会拒绝含该声明的非 TCL 签名 APK。启动别的应用改用
          ResumeService 内的显式 ComponentName 兜底表。 -->
 
-    <application android:label="myDV Resume" android:allowBackup="true">
+    <application android:label="Resume" android:allowBackup="true">
 
         <!-- 故意不声明 CATEGORY_HOME：TCL 验证器会拒绝任何声明 HOME 的非 TCL 签名 APK。
              本应用只靠系统绑定的无障碍服务常驻，开机由系统自动重新绑定，无需 BOOT_COMPLETED。 -->

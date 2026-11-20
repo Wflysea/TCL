@@ -54,7 +54,8 @@ PKG = "com.wb.mydvresume"
 LABEL_BASE = "Resume"
 # Display-only: maps versionCode -> release tag used in the changelog. Not used
 # for any protocol field; unknown codes simply omit the tag.
-RELEASE_NAMES = {17: "v4.1", 18: "v4.2", 19: "v4.2.1", 20: "v4.3", 21: "v4.4"}
+RELEASE_NAMES = {17: "v4.1", 18: "v4.2", 19: "v4.2.1", 20: "v4.3", 21: "v4.4",
+                 22: "v4.5"}
 APK_NAME = "MyDvResume.apk"
 APK_DIR = r"C:\Temp\wbapk"
 AAPT2 = os.path.join(APK_DIR, "tools", "aapt2.exe")

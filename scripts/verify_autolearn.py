@@ -32,8 +32,8 @@ import time
 TV = "192.168.1.26:5555"
 ADB = r"E:\WorkBuddy\闲聊\_tmp\platform-tools\adb.exe"
 PKG = "com.wb.mydvresume"
-EXPECT_VC = "21"
-EXPECT_VN = "3.5"
+EXPECT_VC = "22"
+EXPECT_VN = "3.6"
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # Mirrors ResumeService.SKIP_PKGS: never resumed, so not counted as learnable.
@@ -133,8 +133,12 @@ def main():
 
     print("=== accessibility binding ===")
     acc = sh("dumpsys", "accessibility")
-    bound = "myDV Resume" in acc and "Bound services" in acc
-    print("  [%s] myDV Resume bound" % mark(bound))
+    # Judge by stable component name + a bound-service label; the app label
+    # changed myDV Resume -> Resume in v4.5, so don't hard-code it alone.
+    bound = ("com.wb.mydvresume/com.wb.mydvresume.ResumeService" in acc
+             and "Bound services" in acc
+             and ("label=Resume" in acc or "label=myDV Resume" in acc))
+    print("  [%s] ResumeService bound" % mark(bound))
     print("  enabled_accessibility_services =",
           setting("enabled_accessibility_services", "secure")[:200])
 

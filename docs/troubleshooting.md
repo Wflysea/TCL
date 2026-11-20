@@ -167,7 +167,7 @@ cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.in
 | 握手帧 `159>>X>>0` 的 X | 电视 `tv_content` |
 | --- | --- |
 | `1`（旧脚本写死值） | 「**1** 正在发起应用推送，同意后将接收应用并进行安装」 |
-| `myDV Resume v4.4 (3.5 / vc21)` | 「**myDV Resume v4.4 (3.5 / vc21)** 正在发起应用推送，同意后将接收应用并进行安装」 |
+| `Resume v4.4 (3.5 / vc21)` | 「**Resume v4.4 (3.5 / vc21)** 正在发起应用推送，同意后将接收应用并进行安装」 |
 
 **解法**：`push_apk.py` 的 `push_source()` 把「应用名 + 版本 tag + versionName + versionCode」填进该字段，弹窗直接显示版本。`--plain-source` 可回退成裸「1」。2026-11-20 真机验证完整显示、无截断。
 

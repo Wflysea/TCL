@@ -57,10 +57,10 @@ python push_apk.py --plain-source  # TCL 弹窗来源名退回「1」，不显�
 
 | 位置 | 示例 | 可见？ |
 | --- | --- | --- |
-| TCL 弹窗 `tv_content` 前缀（来自 `159>>` 握手帧来源名） | `myDV Resume v4.4 (3.5 / vc21) 正在发起应用推送…` | ✅ 电视 |
+| TCL 弹窗 `tv_content` 前缀（来自 `159>>` 握手帧来源名） | `Resume v4.4 (3.5 / vc21) 正在发起应用推送…` | ✅ 电视 |
 | 推送前控制台横幅 | `PUSHING myDV Resume v4.4` / `versionCode: 21` / `versionName: 3.5` / sha256 / 电视已装版本 | ✅ PC |
 | 安装后 `=== VERSION CHECK ===` | `before 20/3.4 → after 21/3.5` | ✅ PC |
-| tcast `INSTALL` 帧的 label | `myDV Resume 3.5 / vc21 (v4.4)` | ❌ |
+| tcast `INSTALL` 帧的 label | `Resume 3.5 / vc21 (v4.4)` | ❌ |
 | 下载文件名 | `MyDvResume-v3.5-vc21.apk` | ❌ |
 
 **「1」的真身 / 电视弹窗怎么显示版本（2026-11-20 更正）**：过去 tv_content 里的「1」不是写死编号，而是 `159>>X>>0` 握手帧第 2 项（来源设备名）——官方多屏互动填手机型号，我们脚本以前写死「1」。`push_source()` 现在填入应用名 + 版本，真机验证完整显示无截断；`sizeMB` / label / 文件名 / 系统通知都进不了 tv_content（这些尝试仍无效，见 [troubleshooting.md](troubleshooting.md)）。

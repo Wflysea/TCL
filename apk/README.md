@@ -53,4 +53,4 @@ python push_apk.py      # 电视端按「右 → 同意」；版本号显示在 
 python finalize_resume.py   # 覆盖安装后必须重绑
 ```
 
-v4.4 起**不再有电视端自定义横幅**（v4.3 的 `PUSH_BANNER` / `--banner-only` / `--hide-banner` 已删除）。2026-11-20 起版本号通过 `159>>` 握手帧的来源名显示在 **TCL 原生弹窗**里（如「myDV Resume v4.4 (3.5 / vc21) 正在发起应用推送…」）；`--plain-source` 可退回旧「1」。PC 控制台仍有推送横幅与 `VERSION CHECK`，见 [docs/build-and-push.md](../docs/build-and-push.md)、[troubleshooting](../docs/troubleshooting.md)。
+v4.4 起**不再有电视端自定义横幅**（v4.3 的 `PUSH_BANNER` / `--banner-only` / `--hide-banner` 已删除）。2026-11-20 起版本号通过 `159>>` 握手帧的来源名显示在 **TCL 原生弹窗**里（如「Resume v4.4 (3.5 / vc21) 正在发起应用推送…」）；`--plain-source` 可退回旧「1」。PC 控制台仍有推送横幅与 `VERSION CHECK`，见 [docs/build-and-push.md](../docs/build-and-push.md)、[troubleshooting](../docs/troubleshooting.md)。

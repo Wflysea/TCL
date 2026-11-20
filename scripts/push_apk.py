@@ -51,7 +51,7 @@ TV = "192.168.1.26"
 TCAST_PORT = 6553
 HTTP_PORT = 8765
 PKG = "com.wb.mydvresume"
-LABEL_BASE = "myDV Resume"
+LABEL_BASE = "Resume"
 # Display-only: maps versionCode -> release tag used in the changelog. Not used
 # for any protocol field; unknown codes simply omit the tag.
 RELEASE_NAMES = {17: "v4.1", 18: "v4.2", 19: "v4.2.1", 20: "v4.3", 21: "v4.4"}

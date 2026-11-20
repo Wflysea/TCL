@@ -167,6 +167,6 @@ wakeLaunchOnce = true;                                 // 消耗本次 wake 唯�
 
 同时 `onAccessibilityEvent()` 里 HOME 命中只记日志、**不再调用 `launch()`**（否则会在 4000ms 之前过早启动，被 TCL 随后压下的桌面盖住——这正是 v3.8 回归的根因）。冷开机走独立的 `launchBoot()`，7 次纠正不受 `wakeLaunchOnce` 影响。日志里每次 WAKE 应只有 1 条 `launched … (task reuse)`。
 
-**② 彻底移除 v4.3 的推送横幅。** 删除了服务里的 `PUSH_BANNER` 接收器、`showBanner()` / `hideBanner()`、`TYPE_ACCESSIBILITY_OVERLAY` 窗口及全部相关 import；`push_apk.py` 删除了 `push_banner()` 与 `--banner-only` / `--hide-banner`。TCL 弹窗文案写死在系统资源里，本来就无法显示应用名/版本，版本号现在只在 PC 控制台横幅与 `VERSION CHECK` 显示。
+**② 彻底移除 v4.3 的推送横幅。** 删除了服务里的 `PUSH_BANNER` 接收器、`showBanner()` / `hideBanner()`、`TYPE_ACCESSIBILITY_OVERLAY` 窗口及全部相关 import；`push_apk.py` 删除了 `push_banner()` 与 `--banner-only` / `--hide-banner`。**2026-11-20 更正**：弹窗并非全写死——`tv_title` / 按钮是固定控件，但 `tv_content` 的前缀来自 `159>>X>>0` 握手帧第 2 项（来源名，官方填手机型号）。`push_source()` 现填入版本，TCL **原生弹窗**直接显示版本，不需要覆盖层；`--plain-source` 回退成「1」。PC 控制台仍保留推送横幅与 `VERSION CHECK`。详见 [troubleshooting.md](troubleshooting.md)。
 
 **未改动**：`launch()` 的任务栈复用写法（显式组件 + MAIN/LAUNCHER + `RESET_TASK_IF_NEEDED`、无 `SINGLE_TOP`）、`quietMyDv()`、自动学习集合与六级组件解析、冷启动逻辑。核查命令见 [build-and-push.md](build-and-push.md)。

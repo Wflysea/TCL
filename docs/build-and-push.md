@@ -47,23 +47,25 @@ sha256sum MyDvResume.apk                                     # 记录指纹
 
 ```bash
 cd E:\WorkBuddy\闲聊\_tmp\tcl75v8l_backup
-python push_apk.py                 # 推送；版本号在 PC 控制台显示
+python push_apk.py                 # 推送；版本号显示在 TCL 弹窗 + PC 控制台
 python push_apk.py --info-only     # 只查本地 APK 和电视已装版本，不推送
 python push_apk.py --plain-label   # tcast 帧恢复原始应用名（只影响协议记录）
+python push_apk.py --plain-source  # TCL 弹窗来源名退回「1」，不显示版本
 ```
 
-**版本显示（v4.4 / 2026-11-20 起）**：版本号**只在 PC 控制台可见**。
+**版本显示（2026-11-20 起）**：版本号显示在 **TCL 原生弹窗 + PC 控制台**。
 
 | 位置 | 示例 | 可见？ |
 | --- | --- | --- |
+| TCL 弹窗 `tv_content` 前缀（来自 `159>>` 握手帧来源名） | `myDV Resume v4.4 (3.5 / vc21) 正在发起应用推送…` | ✅ 电视 |
 | 推送前控制台横幅 | `PUSHING myDV Resume v4.4` / `versionCode: 21` / `versionName: 3.5` / sha256 / 电视已装版本 | ✅ PC |
 | 安装后 `=== VERSION CHECK ===` | `before 20/3.4 → after 21/3.5` | ✅ PC |
 | tcast `INSTALL` 帧的 label | `myDV Resume 3.5 / vc21 (v4.4)` | ❌ |
 | 下载文件名 | `MyDvResume-v3.5-vc21.apk` | ❌ |
 
-**为什么电视上看不到应用名和版本（不要再试这些）**：`com.tcl.MultiScreenInteraction_TV` 的确认框是**固定布局 + 固定文案**。UI dump 里只有 `iv_icon`、`tv_title`（「多屏互动」）、`tv_content`（「1 正在发起应用推送，同意后将接收应用并进行安装」）、`btn_negative`（拒绝）、`btn_positive`（同意）——**没有任何应用名 / 版本控件**。实测把 `sizeMB` 字段换成任意文本，`tv_content` 都不变；`cmd notification post` 的通知 importance 仅 3（DEFAULT），`statusbar expand-notifications` 在电视上也不渲染。**改 label、改文件名、改协议字段、发系统通知都无效。**
+**「1」的真身 / 电视弹窗怎么显示版本（2026-11-20 更正）**：过去 tv_content 里的「1」不是写死编号，而是 `159>>X>>0` 握手帧第 2 项（来源设备名）——官方多屏互动填手机型号，我们脚本以前写死「1」。`push_source()` 现在填入应用名 + 版本，真机验证完整显示无截断；`sizeMB` / label / 文件名 / 系统通知都进不了 tv_content（这些尝试仍无效，见 [troubleshooting.md](troubleshooting.md)）。
 
-**v4.3 曾画过一层 `TYPE_ACCESSIBILITY_OVERLAY` 横幅**（左下角显示应用名 + 版本，与右上角弹窗零重叠），但用户 v4.4 要求移除，因此 `--banner-only` / `--hide-banner` / `PUSH_BANNER` 广播与服务的横幅代码已全部删除。这一段历史只作记录，**不要再恢复**。
+**v4.3 曾画过一层 `TYPE_ACCESSIBILITY_OVERLAY` 横幅**（左下角显示应用名 + 版本），但用户 v4.4 要求移除，因此 `--banner-only` / `--hide-banner` / `PUSH_BANNER` 广播与服务的横幅代码已全部删除。**版本现在通过原生弹窗显示，不需要也不再恢复覆盖层横幅。**
 
 - 走 **6553 tcast / `com.tcl.MultiScreenInteraction_TV`** 多屏互动，不是 `adb install`。
 - **电视端会弹安装确认：按「右」选中「同意」再按确认。**

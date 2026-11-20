@@ -158,19 +158,19 @@ cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.in
 
 **注意**：这个提示与 v3.5 那次「推送失败」不是同一回事，也不要往「TCL 签名门 / HOME 声明 / 多 URL 重试」方向排查——那些会出现 `stage=4` 或 `stage=2`，而这里下载是 200、进度到 100%、`PACKAGE_ADDED` 已发出。
 
-## 症状：推送到电视时看不到应用名称和版本号（无法解决，v4.4 起只在 PC 显示）
+## 症状：推送到电视时看不到应用名称和版本号（已解决：握手帧来源字段）
 
-**现象**：PC 控制台能看到版本，电视上却只有「多屏互动 / 1 正在发起应用推送，同意后将接收应用并进行安装 / 拒绝 / 同意」，没有应用名、没有版本号。
+**现象**：过去电视上只有「多屏互动 / 1 正在发起应用推送，同意后将接收应用并进行安装 / 拒绝 / 同意」，那个「1」曾被误认为是写死的文案编号。
 
-**这不是脚本没传**：tcast `223>>INSTALL` 帧的第 7 个字段确实是 `versionCode`，label 字段也携带应用名。但 2026-11-15 21:12 的 UI dump 证明 `com.tcl.MultiScreenInteraction_TV` 的确认框是**固定布局 + 固定文案**：只有 `iv_icon`、`tv_title`、`tv_content`、`btn_negative`、`btn_positive`，没有任何应用名 / 版本控件。逐项实测结果：
+**「1」的真身（2026-11-20 更正）**：它是 **tcast 握手帧 `159>>X>>0` 的第 2 个字段**，即「来源设备名」。官方多屏互动 App 在这里填手机型号；我们脚本一直写死「1」，所以电视就显示「1」。真机对照实验（改握手帧第 2 项后抓 UI dump）：
 
-| 尝试 | 结果 |
+| 握手帧 `159>>X>>0` 的 X | 电视 `tv_content` |
 | --- | --- |
-| 把版本拼进 label | 弹窗文字一字不变 |
-| 把版本写进下载文件名 | 弹窗文字一字不变 |
-| 把 `sizeMB` 槽位换成自定义文本 | `tv_content` 一字不变 |
-| `cmd notification post -t '应用名+版本'` | 通知 importance=3 进通知中心，屏幕无横幅 |
-| `cmd statusbar expand-notifications` | 电视不渲染通知面板 |
-| `APPLICATION_DETAILS_SETTINGS` | 该系统 Activity 不存在 |
+| `1`（旧脚本写死值） | 「**1** 正在发起应用推送，同意后将接收应用并进行安装」 |
+| `myDV Resume v4.4 (3.5 / vc21)` | 「**myDV Resume v4.4 (3.5 / vc21)** 正在发起应用推送，同意后将接收应用并进行安装」 |
 
-**结论**：协议字段、系统通知都改不动这个弹窗，别再试。v4.3 曾用 `TYPE_ACCESSIBILITY_OVERLAY` 在左下角画横幅绕过（同屏截图证实与弹窗零重叠），但用户已在 **v4.4 要求彻底移除横幅**——`PUSH_BANNER` 广播、`--banner-only` / `--hide-banner` 与服务里的横幅代码都已删除。**现在版本号只在 PC 控制台的推送横幅与 `VERSION CHECK` 可见，电视端不会再显示，也不要再恢复横幅。**
+**解法**：`push_apk.py` 的 `push_source()` 把「应用名 + 版本 tag + versionName + versionCode」填进该字段，弹窗直接显示版本。`--plain-source` 可回退成裸「1」。2026-11-20 真机验证完整显示、无截断。
+
+**哪些字段确实无效**（2026-11-15 实测，保留备查）：`223>>INSTALL` 帧的 `label`、下载文件名、`sizeMB` 槽位、系统通知（`cmd notification post` / `expand-notifications`）都进不了 `tv_content`。唯一可控的就是**握手帧来源字段**。
+
+**横幅仍然不要恢复**：v4.3 曾用 `TYPE_ACCESSIBILITY_OVERLAY` 在左下角画版本横幅，用户已在 v4.4 要求彻底移除（`PUSH_BANNER` 广播、`--banner-only` / `--hide-banner` 与服务里的横幅代码都已删除）。现在版本通过握手帧显示在 TCL **原生弹窗**里，不需要任何自定义覆盖层，也不要再恢复横幅。PC 控制台仍保留推送横幅与 `VERSION CHECK`。

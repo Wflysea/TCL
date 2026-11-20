@@ -6,26 +6,30 @@ Starts a local HTTP server for the TV to download the APK, sets up adb reverse,
 then speaks the tcast INSTALL protocol. The TV shows a prompt; the user must
 choose 同意 (press Right once, then OK).
 
-Version visibility (v4.4, 2026-11-20): the TCL 多屏互动 confirm dialog is
-HARDCODED (only tv_title="多屏互动", a fixed tv_content sentence, two buttons
-and an icon) and renders NO app name / version. v4.3 added an on-TV overlay
-banner, but the user asked to remove it, so v4.4 keeps version info ONLY on
-this PC console:
+Version visibility (2026-11-20): the TCL 多屏互动 dialog's tv_title ("多屏互动"),
+its buttons and layout are HARDCODED, but tv_content is
+"<source> 正在发起应用推送，同意后将接收应用并进行安装" — the <source> prefix is
+the 2nd field of the "159>>X>>0" handshake frame (the official 多屏互动 app puts
+the phone model there). Verified on the real TV 2026-11-20: that field renders
+verbatim (sizeMB / label / download file name do NOT reach tv_content), so we
+put the app name + version in it and the pushed version is now visible on the
+TV itself. --plain-source restores the old bare "1".
 
-  - console banner BEFORE pushing (local APK version, sha256, size, TV
-    installed version) and a VERSION CHECK after installation.
+v4.3 added an on-TV TYPE_ACCESSIBILITY_OVERLAY banner; the user asked to remove
+it, so the banner and its PUSH_BANNER broadcast stay REMOVED (no custom overlay).
 
-The on-TV TYPE_ACCESSIBILITY_OVERLAY banner and its PUSH_BANNER broadcast were
-REMOVED from both this script and ResumeService in v4.4.
+Version also shows on this PC console: a banner BEFORE pushing (local APK
+version, sha256, size, TV installed version) and a VERSION CHECK afterwards.
 
 versionCode / versionName are read straight from the APK (aapt2 badging, with
 AndroidManifest.xml as fallback); no hardcoded VERSION constant, so the pushed
 version can never drift from the built APK.
 
 Usage:
-    python push_apk.py                  # push; console shows version
+    python push_apk.py                  # push; TV dialog + console show version
     python push_apk.py --info-only      # just print local + TV versions, no push
     python push_apk.py --plain-label    # keep the bare app name in the protocol
+    python push_apk.py --plain-source   # TV dialog shows "1" instead of version
 
 Prints a state log; exits 0 when the TV reports the app installed.
 """
@@ -135,6 +139,25 @@ def tv_label(vc, vn, plain=False):
     return text
 
 
+def push_source(vc, vn, plain=False):
+    """Text put in the 159 handshake frame's source slot (renders on TV).
+
+    TCL shows this as the prefix of tv_content:
+        "<source> 正在发起应用推送，同意后将接收应用并进行安装"
+    The official 多屏互动 app sends the phone model here. Default: our app
+    name + version so the pushed version is visible on the TV. Verified
+    2026-11-20 that this field — unlike sizeMB / label / file name — reaches
+    the dialog. --plain-source keeps the old bare "1".
+    """
+    if plain:
+        return "1"
+    tag = RELEASE_NAMES.get(int(vc)) if vc.isdigit() else None
+    text = "%s %s / vc%s" % (LABEL_BASE, vn, vc)
+    if tag:
+        text = "%s %s (%s / vc%s)" % (LABEL_BASE, tag, vn, vc)
+    return text
+
+
 def push_filename(vc, vn):
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", vn)
     return "MyDvResume-v%s-vc%s.apk" % (safe, vc)
@@ -232,6 +255,8 @@ def main():
                     help="print local + installed versions, do not push")
     ap.add_argument("--plain-label", action="store_true",
                     help="do not append the version to the TV dialog label")
+    ap.add_argument("--plain-source", action="store_true",
+                    help='TV dialog source prefix shows "1" instead of version')
     args = ap.parse_args()
 
     apk = os.path.join(APK_DIR, APK_NAME)
@@ -243,6 +268,7 @@ def main():
     digest = file_sha256(apk)
     size = os.path.getsize(apk)
     label = tv_label(vc, vn, args.plain_label)
+    source = push_source(vc, vn, args.plain_source)
     tag = RELEASE_NAMES.get(int(vc)) if vc.isdigit() else None
 
     print("============================================================", flush=True)
@@ -251,7 +277,8 @@ def main():
     print("  versionName   : %s" % vn, flush=True)
     print("  APK           : %s (%d bytes)" % (apk, size), flush=True)
     print("  sha256        : %s" % digest, flush=True)
-    print("  TV protocol   : %s (TCL dialog text is fixed)" % label, flush=True)
+    print("  TV source     : %s  <- shows in TCL dialog" % source, flush=True)
+    print("  TV protocol   : %s (label not rendered by TCL)" % label, flush=True)
     print("============================================================", flush=True)
 
     if args.info_only:
@@ -305,7 +332,9 @@ def main():
             print("  connect failed:", e, flush=True)
             continue
         sock.settimeout(1)
-        send(sock, "159>>1>>0")
+        # 2nd field is the "source" TCL renders in tv_content; official
+        # 多屏互动 sends the phone model there. We send app name + version.
+        send(sock, "159>>%s>>0" % source)
         path_md5 = hashlib.md5(url.encode()).hexdigest()
         send(sock, ">>".join(["223", "INSTALL", PKG, label, url, "2", vc,
                               size_mb, "", "", "", path_md5]))
